@@ -1,4 +1,4 @@
-# GrossPay API — Bangladesh (BDT · bKash)
+# GrossPay API
 
 Merchant integration guide for accepting **bKash** deposits and sending **bKash** payouts in Bangladesh through the GrossPay API.
 
