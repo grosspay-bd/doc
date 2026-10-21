@@ -2,7 +2,7 @@
 
 Merchant integration guide for accepting **bKash** deposits and sending **bKash** payouts in Bangladesh through the GrossPay API.
 
-| | |
+| Parameter | Value |
 |---|---|
 | **API version** | `v1` (document revision 2026-10-21) |
 | **Country / currency** | Bangladesh · `BDT` |
