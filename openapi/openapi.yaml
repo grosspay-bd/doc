@@ -1,0 +1,557 @@
+openapi: 3.0.3
+info:
+  title: GrossPay API — Bangladesh (BDT · bKash)
+  version: "1.0.0"
+  description: |
+    Merchant API for bKash deposits (pay-in, `intent: debit`) and bKash payouts
+    (pay-out, `intent: credit`) in Bangladesh.
+
+    * All amounts are decimal **strings** (`"1000.00"`).
+    * Authentication: `Authorization: Bearer <API_KEY>` on every request
+      (without the `Bearer ` prefix the request is rejected with `403`).
+    * Pay-ins work only through the hosted payment page (`hosted_url`);
+      host-to-host (`silent_mode`) is not available for Bangladesh.
+    * Webhooks are sent to `callback_uri` on every state change, from IP
+      `136.148.218.118`, signed with RSA PKCS#1 v1.5 / SHA-256 over the raw body
+      (header `signature-v1`, base64).
+
+    Full guide: see the `docs/` folder of this repository.
+  contact:
+    name: GrossPay integration support
+    url: https://cabinet.grosspayme.com
+servers:
+  - url: https://api-test.grosspayme.com/v1
+    description: Test (stage)
+  - url: https://api.grosspayme.com/v1
+    description: Production
+security:
+  - bearerAuth: []
+tags:
+  - name: Payments
+    description: Create payments (debit / credit) and read their state
+  - name: Disputes
+    description: Escalate a payment with supporting documents
+  - name: Partner
+    description: Merchant account information
+
+paths:
+  /payments/init:
+    post:
+      tags: [Payments]
+      operationId: initPayment
+      summary: Create a payment (deposit or payout)
+      description: |
+        One endpoint for both directions, selected by `intent`:
+
+        * `debit` — **pay-in**. Redirect the payer to `hosted_url`; they pay via bKash and enter the TrxID.
+        * `credit` — **pay-out** to a personal bKash wallet (`credit_details.wallet_number`).
+
+        `merchant_ref` is the idempotency key. After a timeout, check
+        `GET /payments/{merchant_ref}/state` before repeating the request with the same `merchant_ref`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/DebitRequest'
+                - $ref: '#/components/schemas/CreditRequest'
+              discriminator:
+                propertyName: intent
+                mapping:
+                  debit: '#/components/schemas/DebitRequest'
+                  credit: '#/components/schemas/CreditRequest'
+            examples:
+              debit:
+                summary: Pay-in (deposit) via hosted page
+                value:
+                  order_amount: "1000.00"
+                  order_currency: BDT
+                  intent: debit
+                  route_kind: wallet
+                  merchant_ref: order_bd_0001
+                  holder_ref: user_bd_001
+                  holder_name: Rahim Uddin
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  return_uri: https://your-site.com/deposit/finished
+              credit:
+                summary: Pay-out (withdrawal) to bKash
+                value:
+                  order_amount: "1500.00"
+                  order_currency: BDT
+                  intent: credit
+                  route_kind: wallet
+                  merchant_ref: withdraw_bd_0001
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  credit_details:
+                    wallet_number: "01712345678"
+                    payee_title: Rahim Uddin
+      responses:
+        '200':
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              examples:
+                debit:
+                  summary: Pay-in created
+                  value:
+                    payment_id: 01a15cf5-f7c2-78b1-9276-87ea2c018577
+                    hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
+                    merchant_ref: order_bd_0001
+                    posting_state: received
+                    client_amount: null
+                    decline_note: null
+                    order_amount: "1000.00"
+                    order_currency: BDT
+                    booked_at: "2026-10-21T05:36:26.058Z"
+                    posted_at: null
+                    payee_details: null
+                    valid_through: null
+                credit:
+                  summary: Pay-out created (no hosted_url)
+                  value:
+                    payment_id: 01a15d02-3b9e-7c11-8a4f-5e2d9c1b7a60
+                    merchant_ref: withdraw_bd_0001
+                    posting_state: received
+                    client_amount: null
+                    decline_note: null
+                    order_amount: "1500.00"
+                    order_currency: BDT
+                    booked_at: "2026-10-21T06:02:11.410Z"
+                    posted_at: null
+                    payee_details: null
+                    valid_through: null
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '470': { $ref: '#/components/responses/Declined470' }
+        '471': { $ref: '#/components/responses/Declined471' }
+        '474': { $ref: '#/components/responses/Declined474' }
+        '475': { $ref: '#/components/responses/Declined475' }
+        '476': { $ref: '#/components/responses/Declined476' }
+        '477': { $ref: '#/components/responses/Declined477' }
+        '5XX': { $ref: '#/components/responses/ServerError' }
+      callbacks:
+        paymentStateChanged:
+          '{$request.body#/callback_uri}':
+            post:
+              summary: Webhook — payment state changed
+              description: |
+                Sent on every state change from IP `136.148.218.118`.
+
+                Verify `signature-v1`: base64 RSA PKCS#1 v1.5 SHA-256 signature of the **raw** body
+                bytes, with your merchant webhook public key.
+
+                Respond `2xx` to acknowledge. `405` means the merchant refuses the payment.
+                Any other response (or a timeout) causes the webhook to be sent again.
+              parameters:
+                - in: header
+                  name: signature-v1
+                  required: true
+                  description: Base64 RSA-SHA256 (PKCS#1 v1.5) signature of the raw request body
+                  schema:
+                    type: string
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/Payment'
+                    example:
+                      payment_id: 01a15cf5-f7c2-78b1-9276-87ea2c018577
+                      hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
+                      merchant_ref: order_bd_0001
+                      posting_state: posted
+                      amount_posted: "1000.00"
+                      client_amount: null
+                      decline_note: null
+                      order_amount: "1000.00"
+                      order_currency: BDT
+                      booked_at: "2026-10-21T05:36:26.058Z"
+                      posted_at: "2026-10-21T05:41:02.511Z"
+                      payee_details: null
+                      valid_through: null
+              responses:
+                '200':
+                  description: Accepted (any 2xx)
+                '405':
+                  description: Merchant refuses the payment
+                default:
+                  description: Not delivered — the webhook will be retried
+
+  /payments/{id}/state:
+    get:
+      tags: [Payments]
+      operationId: getPaymentState
+      summary: Get payment state
+      description: |
+        `{id}` is either the GrossPay `payment_id` or your `merchant_ref`.
+
+        The state is cached on the API side — use webhooks to track changes and this endpoint
+        for recovery and reconciliation.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: GrossPay `payment_id` or your `merchant_ref` (URL-encoded)
+          schema:
+            type: string
+          examples:
+            payment_id:
+              value: 01a15cf5-f7c2-78b1-9276-87ea2c018577
+            merchant_ref:
+              value: order_bd_0001
+      responses:
+        '200':
+          description: Current payment state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+              example:
+                payment_id: 01a15cf5-f7c2-78b1-9276-87ea2c018577
+                hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
+                merchant_ref: order_bd_0001
+                posting_state: posted
+                amount_posted: "1000.00"
+                client_amount: null
+                decline_note: null
+                order_amount: "1000.00"
+                order_currency: BDT
+                booked_at: "2026-10-21T05:36:26.058Z"
+                posted_at: "2026-10-21T05:41:02.511Z"
+                payee_details: null
+                valid_through: null
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Payment not found for this merchant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '5XX': { $ref: '#/components/responses/ServerError' }
+
+  /payments/{payment_id}/escalate:
+    post:
+      tags: [Disputes]
+      operationId: escalatePayment
+      summary: Open a dispute
+      description: |
+        Attach 1 to 3 files (PDF, JPEG or PNG, each up to 5 MB) and an optional comment.
+      parameters:
+        - in: path
+          name: payment_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file1]
+              properties:
+                file1:
+                  type: string
+                  format: binary
+                  description: Evidence file (PDF/JPEG/PNG, ≤ 5 MB)
+                file2:
+                  type: string
+                  format: binary
+                file3:
+                  type: string
+                  format: binary
+                comment:
+                  type: string
+                  example: Paid via bKash, TrxID 9A1B2C3D4E
+      responses:
+        '200':
+          description: Dispute registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [escalated]
+                properties:
+                  escalated:
+                    type: boolean
+                    example: true
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+        '5XX': { $ref: '#/components/responses/ServerError' }
+
+  /partner/ledger_balance:
+    get:
+      tags: [Partner]
+      operationId: getLedgerBalance
+      summary: Get merchant balance
+      responses:
+        '200':
+          description: Balance
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available_balance, curr_alpha]
+                properties:
+                  available_balance:
+                    type: string
+                    description: Available funds (decimal string)
+                    example: "0.00"
+                  curr_alpha:
+                    type: string
+                    description: ISO 4217 alpha currency code
+                    example: BDT
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+        '5XX': { $ref: '#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Merchant API key. Header format `Authorization: Bearer <API_KEY>`."
+
+  schemas:
+    Amount:
+      type: string
+      pattern: '^\d+(\.\d{1,2})?$'
+      description: Decimal amount as a string
+      example: "1000.00"
+
+    BaseRequest:
+      type: object
+      required: [order_amount, order_currency, intent, route_kind, merchant_ref, holder_ref, callback_uri]
+      properties:
+        order_amount:
+          $ref: '#/components/schemas/Amount'
+        order_currency:
+          type: string
+          enum: [BDT]
+        intent:
+          type: string
+          enum: [debit, credit]
+        route_kind:
+          type: string
+          enum: [wallet]
+        merchant_ref:
+          type: string
+          minLength: 5
+          maxLength: 64
+          description: Your unique payment ID; idempotency key
+          example: order_bd_0001
+        holder_ref:
+          type: string
+          maxLength: 128
+          description: ID of the payer / recipient in your system
+          example: user_bd_001
+        callback_uri:
+          type: string
+          format: uri
+          description: HTTPS URL for webhooks
+          example: https://your-site.com/webhooks/grosspay
+
+    DebitRequest:
+      description: Pay-in (deposit) via the hosted payment page
+      allOf:
+        - $ref: '#/components/schemas/BaseRequest'
+        - type: object
+          required: [return_uri]
+          properties:
+            intent:
+              type: string
+              enum: [debit]
+            holder_name:
+              type: string
+              description: Payer's name (optional)
+              example: Rahim Uddin
+            return_uri:
+              type: string
+              format: uri
+              description: Where the payer is sent after the payment page
+              example: https://your-site.com/deposit/finished
+
+    CreditRequest:
+      description: Pay-out (withdrawal) to a personal bKash wallet
+      allOf:
+        - $ref: '#/components/schemas/BaseRequest'
+        - type: object
+          required: [credit_details]
+          properties:
+            intent:
+              type: string
+              enum: [credit]
+            credit_details:
+              $ref: '#/components/schemas/CreditDetails'
+
+    CreditDetails:
+      type: object
+      required: [wallet_number]
+      properties:
+        wallet_number:
+          type: string
+          description: |
+            Recipient bKash number. Accepted as `01712345678`, `8801712345678` or `+880 1712-345678`.
+            After normalisation it must match `^01[3-9]\d{8}$`, otherwise error `474`.
+          example: "01712345678"
+        payee_title:
+          type: string
+          description: Recipient's name (optional)
+          example: Rahim Uddin
+
+    PostingState:
+      type: string
+      enum: [received, queued, posted, part_posted, unposted, returned]
+      description: |
+        * `received` — created, waiting for payment
+        * `queued` — payment confirmed, booking in progress
+        * `posted` — fully booked (can later become `returned`)
+        * `part_posted` — partially booked; actual amount in `amount_posted`
+        * `unposted` — declined, cancelled or expired
+        * `returned` — rolled back: reversal, refund or chargeback
+
+    Payment:
+      type: object
+      description: Payment object — returned by `/payments/init`, `/payments/{id}/state` and sent in webhooks
+      required: [payment_id, merchant_ref, posting_state, order_amount, order_currency, booked_at]
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+          example: 01a15cf5-f7c2-78b1-9276-87ea2c018577
+        hosted_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Hosted payment page (pay-in only)
+        merchant_ref:
+          type: string
+          example: order_bd_0001
+        posting_state:
+          $ref: '#/components/schemas/PostingState'
+        order_amount:
+          $ref: '#/components/schemas/Amount'
+        order_currency:
+          type: string
+          example: BDT
+        amount_posted:
+          type: string
+          nullable: true
+          description: Amount actually booked; present once the payment is booked
+          example: "1000.00"
+        client_amount:
+          type: string
+          nullable: true
+          description: Settlement amount for the merchant; null until known
+        decline_note:
+          type: string
+          nullable: true
+          description: Human-readable reason for `unposted` / `returned`
+        booked_at:
+          type: string
+          format: date-time
+          example: "2026-10-21T05:36:26.058Z"
+        posted_at:
+          type: string
+          format: date-time
+          nullable: true
+        payee_details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Payment / recipient details when applicable; null for hosted-page pay-ins
+        valid_through:
+          type: string
+          format: date-time
+          nullable: true
+          description: Deadline to complete the payment, when set
+
+    ErrorEnvelope:
+      type: object
+      required: [ok, fault]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        fault:
+          type: object
+          required: [class, code, detail]
+          properties:
+            class:
+              type: string
+              enum: [validation, unauthorized, declined, server]
+            code:
+              type: string
+              example: "474"
+            detail:
+              type: string
+              example: "Invalid bKash wallet number (0171234), expected format: 01XXXXXXXXX"
+            at:
+              type: array
+              nullable: true
+              items:
+                type: string
+              description: Invalid fields (validation errors only)
+
+  responses:
+    ValidationError:
+      description: Invalid request fields (`fault.class = validation`, `fault.at` lists fields)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Missing / invalid API key or missing `Bearer ` prefix (`fault.class = unauthorized`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    ServerError:
+      description: Server error (`fault.class = server`) — retry with back-off
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Declined470:
+      description: The payer already has an active payment
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Declined471:
+      description: Merchant limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Declined474:
+      description: Invalid payment details (e.g. bKash number)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example:
+            ok: false
+            fault:
+              class: declined
+              code: "474"
+              detail: "Invalid bKash wallet number (0171234), expected format: 01XXXXXXXXX"
+              at: null
+    Declined475:
+      description: Amount below the minimum
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Declined476:
+      description: Amount above the maximum
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Declined477:
+      description: Temporary — repeat the request later with the same merchant_ref
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
