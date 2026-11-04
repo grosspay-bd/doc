@@ -42,7 +42,7 @@ Any request that fails returns a non-`2xx` HTTP status and this body:
 
 | `fault.class` | HTTP status | When | Retry? |
 |---|---|---|---|
-| `validation` | `400`, `422` | Malformed JSON, missing or invalid fields. `fault.at` lists the fields. | **No** — fix the request |
+| `validation` | `400`, `422` | Malformed JSON, missing or invalid fields; payment method / network not enabled for your account (`fault.at: ["route_network"]`). `fault.at` lists the fields. | **No** — fix the request |
 | `unauthorized` | `401`, `403` | Wrong, empty or revoked API key; `Authorization` header without `Bearer ` prefix | **No** — fix credentials |
 | `declined` | other `4xx` | Business refusal — see codes below | **No**, except `477` |
 | `server` | `5xx` | Error on GrossPay side | **Yes**, with back-off (see [retry policy](#retry-policy)) |
@@ -55,7 +55,7 @@ Any request that fails returns a non-`2xx` HTTP status and this body:
 |---|---|---|
 | `470` | The payer (`holder_ref`) already has an active payment | Don't create another one. For a deposit, send the customer back to the existing `hosted_url`, or wait until the previous payment is final. |
 | `471` | Merchant limit exceeded | Stop and alert your team; contact your manager to review limits. Show the customer a generic "try later" message. |
-| `474` | Invalid payment details (e.g. bKash number) | Ask the customer to correct the details. See [number rules](03-pay-out.md#bkash-wallet-number-rules). |
+| `474` | Invalid payment details: wallet number of any network (`wallet_number`, `holder_account`), bank `account_number` or `routing_number` | Ask the customer to correct the details. See [wallet number rules](03-pay-out.md#wallet-number-rules) and [bank account fields](03-pay-out.md#pay-out-to-a-bank-account). |
 | `475` | Amount is below the minimum | Show the minimum amount to the customer |
 | `476` | Amount is above the maximum | Show the maximum amount to the customer |
 | `477` | Temporary — repeat the request later | Retry later with the **same** `merchant_ref` |
@@ -95,6 +95,22 @@ Recommended HTTP client timeouts: connect 5–10 s, read 30 s.
 }
 ```
 
+### Method / network not enabled for your account
+
+```json
+{
+  "ok": false,
+  "fault": {
+    "class": "validation",
+    "code": "400",
+    "detail": "route_network nagad is not enabled for this merchant",
+    "at": ["route_network"]
+  }
+}
+```
+
+The same error is returned for `route_kind: "bank"` without `route_network`.
+
 ### Missing `Bearer ` prefix
 
 ```http
@@ -117,7 +133,7 @@ HTTP/1.1 403 Forbidden
 }
 ```
 
-*The `detail` texts and `code` values in the validation/unauthorized/470 examples are illustrative; rely on `fault.class` and `fault.code`, not on `detail`.*
+*The `detail` texts and `code` values in the validation/not-enabled/unauthorized/470 examples are illustrative; rely on `fault.class` and `fault.code`, not on `detail`.*
 
 ### Handling errors in code
 
