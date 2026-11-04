@@ -1,14 +1,14 @@
-# GrossPay API
+# GrossPay API — Bangladesh (BDT)
 
-Merchant integration guide for accepting **bKash** deposits and sending **bKash** payouts in Bangladesh through the GrossPay API.
+Merchant integration guide for accepting deposits (**bKash, Nagad, BanglaQR, cards**) and sending payouts (**mobile wallets, bank accounts**) in Bangladesh through the GrossPay API.
 
 | Parameter | Value |
 |---|---|
-| **API version** | `v1` (document revision 2026-10-21) |
+| **API version** | `v1` (document revision 2026-11-04) |
 | **Country / currency** | Bangladesh · `BDT` |
-| **Payment rail** | bKash personal wallet (`route_kind: "wallet"`) |
-| **Pay-in (deposit)** | Hosted payment page only |
-| **Pay-out (withdrawal)** | Server-to-server to a bKash wallet number |
+| **Pay-in (deposit)** | bKash, Nagad (wallet transfer), BanglaQR, card — hosted payment page only |
+| **Pay-out (withdrawal)** | Server-to-server to bKash / Nagad / Rocket / Upay wallets and bank accounts |
+| **Method selection** | `route_kind` + `route_network` in the request — see [Payment methods & networks](docs/11-payment-methods.md) |
 | **Format** | JSON over HTTPS, Bearer-token auth, RSA-signed webhooks |
 
 ---
@@ -28,6 +28,7 @@ Merchant integration guide for accepting **bKash** deposits and sending **bKash*
        "order_currency": "BDT",
        "intent": "debit",
        "route_kind": "wallet",
+       "route_network": "bkash",
        "merchant_ref": "order_bd_0001",
        "holder_ref": "user_bd_001",
        "callback_uri": "https://your-site.com/webhooks/grosspay",
@@ -35,7 +36,8 @@ Merchant integration guide for accepting **bKash** deposits and sending **bKash*
      }'
    ```
 
-4. **Redirect the payer** to `hosted_url` from the response. The payer pays in the bKash app and enters the bKash TrxID on the page.
+4. **Redirect the payer** to `hosted_url` from the response. The payer pays in the wallet app and enters the TrxID on the page.
+   For Nagad, BanglaQR or cards change `route_kind` / `route_network` — see [Payment methods & networks](docs/11-payment-methods.md).
 5. **Handle the webhook**: verify the `signature-v1` header, update your order from `posting_state` / `amount_posted`, reply `200`.
 
 Then work through the [go-live checklist](docs/10-go-live-checklist.md).
@@ -47,8 +49,8 @@ Then work through the [go-live checklist](docs/10-go-live-checklist.md).
 | # | Section | What's inside |
 |---|---|---|
 | 01 | [Getting started](docs/01-getting-started.md) | Environments, merchant cabinet, authentication, conventions |
-| 02 | [Pay-in (debit)](docs/02-pay-in.md) | Deposit flow, request fields, hosted page, examples |
-| 03 | [Pay-out (credit)](docs/03-pay-out.md) | Withdrawal flow, bKash number rules, examples, safe retries |
+| 02 | [Pay-in (debit)](docs/02-pay-in.md) | Deposit flow, methods, `holder_account`, hosted page, examples |
+| 03 | [Pay-out (credit)](docs/03-pay-out.md) | Payouts to wallets and bank accounts, number rules, examples, safe retries |
 | 04 | [Payment status](docs/04-payment-status.md) | `GET /state` by `payment_id` or `merchant_ref`, polling rules |
 | 05 | [Webhooks](docs/05-webhooks.md) | Delivery, IP, signature verification, response codes, handler algorithm |
 | 06 | [Payment object & lifecycle](docs/06-payment-object.md) | Every field, `posting_state` machine, how to book balances |
@@ -56,6 +58,7 @@ Then work through the [go-live checklist](docs/10-go-live-checklist.md).
 | 08 | [Disputes](docs/08-disputes.md) | `POST /escalate` with receipts |
 | 09 | [Balance](docs/09-balance.md) | `GET /partner/ledger_balance` |
 | 10 | [Go-live checklist](docs/10-go-live-checklist.md) | Test scenarios and production readiness |
+| 11 | [Payment methods & networks](docs/11-payment-methods.md) | `route_kind` / `route_network` matrix, wallet number formats, bank directory, bank payout timing |
 
 ## Machine-readable spec & examples
 
@@ -65,8 +68,7 @@ Then work through the [go-live checklist](docs/10-go-live-checklist.md).
 | [`postman/`](postman) | Postman collection + Test/Production environments |
 | [`examples/curl/`](examples/curl) | Ready-to-run shell scripts for every endpoint |
 | [`examples/webhooks/`](examples/webhooks) | Webhook receivers with signature verification: Node.js, Python, PHP |
-| [`examples/python-client/`](examples/python-client) | Minimal Python client incl. bKash number normalisation |
-| [`keys/`](keys) | Sandbox webhook public keys of the shared test merchant |
+| [`examples/python-client/`](examples/python-client) | Minimal Python client incl. wallet number normalisation and bank payouts |
 
 ---
 
