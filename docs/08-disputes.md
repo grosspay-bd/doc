@@ -2,7 +2,7 @@
 
 ← [Errors](07-errors.md) · Next: [Balance](09-balance.md) →
 
-Open a dispute when the result of a payment doesn't match reality — typically a customer **paid via bKash but the deposit is `unposted`** or stuck, or was booked with the wrong amount.
+Open a dispute when the result of a payment doesn't match reality — typically a customer **paid (bKash, Nagad, BanglaQR, card) but the deposit is `unposted`** or stuck, or was booked with the wrong amount.
 
 ## Endpoint
 
@@ -13,8 +13,8 @@ Open a dispute when the result of a payment doesn't match reality — typically 
 
 | Form field | Required | Description |
 |---|---|---|
-| `file1`, `file2`, `file3` | **1 to 3 files** | Evidence: bKash payment receipt / screenshot of the transaction / statement. **PDF, JPEG or PNG**, each **up to 5 MB**. |
-| `comment` | no | Free text: what happened, bKash TrxID, amount, payer's wallet number, time of payment |
+| `file1`, `file2`, `file3` | **1 to 3 files** | Evidence: payment receipt / screenshot of the transaction in the wallet app / bank statement. **PDF, JPEG or PNG**, each **up to 5 MB**. |
+| `comment` | no | Free text: what happened, TrxID, amount, payer's wallet number, time of payment |
 
 ## Example
 
@@ -67,9 +67,9 @@ const res = await fetch(`${BASE_URL}/payments/${paymentId}/escalate`, {
 
 ## What makes a good dispute
 
-- The **bKash TrxID** (10-character transaction ID from the bKash SMS/app) in `comment`.
+- The wallet **TrxID** (transaction ID from the SMS / app) in `comment`. If the payment object has `rail_ref`, quote it too.
 - A receipt where amount, date/time and recipient number are readable — crop nothing important.
-- Exact amount paid and the payer's bKash number.
+- Exact amount paid and the payer's wallet number (bKash, Nagad, …) or bank account.
 - One dispute per payment; attach all evidence in one request.
 
 ## After escalation
