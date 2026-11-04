@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "GrossPay API — Bangladesh (BDT · bKash)",
-    "description": "Requests for the GrossPay Bangladesh integration. Select the **GrossPay BD — Test** environment and set `apiKey`.",
+    "name": "GrossPay API — Bangladesh (BDT)",
+    "description": "Requests for the GrossPay Bangladesh integration: deposits (bKash, Nagad, BanglaQR, card) and payouts (wallets, bank accounts).\n\n**Setup**\n1. Import this collection and the *GrossPay BD — Test* environment.\n2. Select the environment and set `apiKey` (your **test** API key).\n3. Set `callbackUri` to your webhook endpoint or a request-bin URL (e.g. webhook.site) to see webhooks.\n4. Run *1. Pay-in → Create deposit*, open `hosted_url`, pay. IDs are saved automatically for the status requests.\n\nEvery request has tests (see *Test Results*). Folder *5. Negative tests* checks error handling.\n\nWebhooks are sent from IP `136.148.218.118` and signed (`signature-v1`, RSA-SHA256). Postman cannot receive them — use your endpoint or a request bin.\n\nFull documentation: https://github.com/grosspay-bd/doc",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -14,26 +14,64 @@
       }
     ]
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('apiKey') && !pm.variables.get('apiKey')) {",
+          "  throw new Error('Select the GrossPay BD environment and set apiKey');",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response is JSON (not a Cloudflare/HTML page)', () => {",
+          "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('json');",
+          "});",
+          "pm.test('Response time < 30s', () => pm.expect(pm.response.responseTime).to.be.below(30000));"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
-      "key": "paymentId",
+      "key": "debitRef",
       "value": ""
     },
     {
-      "key": "merchantRef",
+      "key": "debitPaymentId",
       "value": ""
     },
     {
-      "key": "newRef",
+      "key": "hostedUrl",
+      "value": ""
+    },
+    {
+      "key": "creditRef",
+      "value": ""
+    },
+    {
+      "key": "creditPaymentId",
+      "value": ""
+    },
+    {
+      "key": "tmpRef",
       "value": ""
     }
   ],
   "item": [
     {
-      "name": "Payments",
+      "name": "1. Pay-in (debit)",
+      "description": "Deposits via hosted payment page: wallet (bKash/Nagad), BanglaQR, card. Docs: https://github.com/grosspay-bd/doc/blob/main/docs/02-pay-in.md",
       "item": [
         {
-          "name": "Create pay-in (debit)",
+          "name": "Create deposit",
           "request": {
             "method": "POST",
             "header": [
@@ -52,10 +90,10 @@
                 "init"
               ]
             },
-            "description": "Creates a bKash deposit. Open `hosted_url` from the response in a browser to pay.",
+            "description": "Creates a deposit with a fresh `merchant_ref` (`order_bd_<timestamp>`).\n\nOpen `hosted_url` from the response (also printed in the Postman console and saved to the `hostedUrl` variable) to pay with bKash and enter the TrxID.\n\n**Credit the customer only after a signed webhook with `posted` / `part_posted`, using `amount_posted`.**",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"order_amount\": \"1000.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"merchant_ref\": \"{{newRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{debitRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -63,32 +101,44 @@
               }
             }
           },
+          "response": [],
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('debitRef', 'order_bd_' + Date.now());"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json();",
-                  "pm.test('2xx and not an error envelope', () => { pm.expect(pm.response.code).to.be.within(200,299); pm.expect(d.ok).to.not.eql(false); });",
-                  "if (d.payment_id) { pm.collectionVariables.set('paymentId', d.payment_id); }",
-                  "if (d.merchant_ref) { pm.collectionVariables.set('merchantRef', d.merchant_ref); }"
-                ]
-              }
-            },
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('newRef', 'order_bd_' + Date.now());"
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('hosted_url returned', () => pm.expect(d.hosted_url).to.be.a('string').and.not.empty);",
+                  "pm.test('Starts as received', () => pm.expect(d.posting_state).to.eql('received'));",
+                  "if (d.payment_id) pm.collectionVariables.set('debitPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('debitRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);",
+                  "if (d.hosted_url) { pm.collectionVariables.set('hostedUrl', d.hosted_url); console.log('Open to pay:', d.hosted_url); }"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create payout (credit)",
+          "name": "Create deposit — Nagad with holder_account",
           "request": {
             "method": "POST",
             "header": [
@@ -107,10 +157,10 @@
                 "init"
               ]
             },
-            "description": "Sends a payout to a personal bKash wallet.",
+            "description": "Nagad wallet transfer. `holder_account` (optional) is the wallet the customer will pay from; it is normalised and returned in the payment object (may be masked).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"order_amount\": \"1500.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"merchant_ref\": \"{{newRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"01712345678\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"nagad\",\n  \"merchant_ref\": \"{{debitRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\",\n  \"holder_account\": \"{{holderAccount}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -118,70 +168,44 @@
               }
             }
           },
+          "response": [],
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('debitRef', 'order_bd_' + Date.now());"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json();",
-                  "pm.test('2xx and not an error envelope', () => { pm.expect(pm.response.code).to.be.within(200,299); pm.expect(d.ok).to.not.eql(false); });",
-                  "if (d.payment_id) { pm.collectionVariables.set('paymentId', d.payment_id); }",
-                  "if (d.merchant_ref) { pm.collectionVariables.set('merchantRef', d.merchant_ref); }"
-                ]
-              }
-            },
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('newRef', 'withdraw_bd_' + Date.now());"
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('route_kind = wallet', () => pm.expect(d.route_kind).to.eql('wallet'));",
+                  "pm.test('route_network = nagad', () => pm.expect(d.route_network).to.eql('nagad'));",
+                  "pm.test('holder_account returned', () => pm.expect(d.holder_account).to.be.a('string'));",
+                  "if (d.payment_id) pm.collectionVariables.set('debitPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('debitRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Get state by payment_id",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/payments/{{paymentId}}/state",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "payments",
-                "{{paymentId}}",
-                "state"
-              ]
-            },
-            "description": "Uses `paymentId` saved by the last create request."
-          }
-        },
-        {
-          "name": "Get state by merchant_ref",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/payments/{{merchantRef}}/state",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "payments",
-                "{{merchantRef}}",
-                "state"
-              ]
-            },
-            "description": "Lookup by your own reference."
-          }
-        },
-        {
-          "name": "Payout with invalid bKash number (expect 474)",
+          "name": "Create deposit — BanglaQR",
           "request": {
             "method": "POST",
             "header": [
@@ -200,10 +224,10 @@
                 "init"
               ]
             },
-            "description": "Negative test: expects error envelope with fault.code 474.",
+            "description": "The page shows a BanglaQR code; the customer scans it with the bKash / Nagad app. `route_network`: `bkash` or `nagad`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"order_amount\": \"1500.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"merchant_ref\": \"{{newRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"0171234\"\n  }\n}",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"banglaqr\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{debitRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -211,6 +235,125 @@
               }
             }
           },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('debitRef', 'order_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('route_kind = banglaqr', () => pm.expect(d.route_kind).to.eql('banglaqr'));",
+                  "pm.test('route_network = bkash', () => pm.expect(d.route_network).to.eql('bkash'));",
+                  "if (d.payment_id) pm.collectionVariables.set('debitPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('debitRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create deposit — card",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Card payment on the hosted page. `route_network` is not sent for cards.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"card\",\n  \"merchant_ref\": \"{{debitRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('debitRef', 'order_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('route_kind = card', () => pm.expect(d.route_kind).to.eql('card'));",
+                  "if (d.payment_id) pm.collectionVariables.set('debitPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('debitRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get deposit state (by payment_id)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{debitPaymentId}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{debitPaymentId}}",
+                "state"
+              ]
+            },
+            "description": "Uses `debitPaymentId` saved by *Create deposit*. State is cached — webhooks are the source of truth."
+          },
+          "response": [],
           "event": [
             {
               "listen": "test",
@@ -218,16 +361,53 @@
                 "type": "text/javascript",
                 "exec": [
                   "const d = pm.response.json();",
-                  "pm.test('fault.code is 474', () => pm.expect(d.fault && d.fault.code).to.eql('474'));"
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});"
                 ]
               }
+            }
+          ]
+        },
+        {
+          "name": "Get deposit state (by merchant_ref)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{debitRef}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{debitRef}}",
+                "state"
+              ]
             },
+            "description": "Same payment, looked up by your own `merchant_ref`. This is how you recover after a timeout on `POST /payments/init`."
+          },
+          "response": [],
+          "event": [
             {
-              "listen": "prerequest",
+              "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set('newRef', 'withdraw_bd_' + Date.now());"
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});"
                 ]
               }
             }
@@ -236,46 +416,352 @@
       ]
     },
     {
-      "name": "Disputes",
+      "name": "2. Pay-out (credit)",
+      "description": "Payouts to wallets (bKash/Nagad/Rocket/Upay) and bank accounts. Docs: https://github.com/grosspay-bd/doc/blob/main/docs/03-pay-out.md",
       "item": [
         {
-          "name": "Escalate payment",
+          "name": "Create payout",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/payments/{{paymentId}}/escalate",
+              "raw": "{{baseUrl}}/payments/init",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "payments",
-                "{{paymentId}}",
-                "escalate"
+                "init"
               ]
             },
-            "description": "multipart/form-data. Choose 1–3 files (PDF/JPEG/PNG, ≤ 5 MB each).",
+            "description": "Sends `payoutAmount` to `walletNumber` (environment variables).\n\nAccepted number formats: `01712345678`, `8801712345678`, `+880 1712-345678`; normalised value must match `^01[3-9]\\d{8}$`, otherwise error `474`.\n\n⚠️ In Production this sends real money.",
             "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file1",
-                  "type": "file",
-                  "src": []
-                },
-                {
-                  "key": "comment",
-                  "type": "text",
-                  "value": "Paid via bKash, TrxID 9A1B2C3D4E"
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{creditRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"{{walletNumber}}\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-              ]
+              }
             }
-          }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('creditRef', 'withdraw_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('No hosted_url for payouts', () => pm.expect(d.hosted_url == null).to.be.true);",
+                  "if (d.payment_id) pm.collectionVariables.set('creditPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('creditRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payout — international number format",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Same as above, wallet given as `+880 1712-345678` — GrossPay normalises it to `01712345678`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{creditRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"+880 1712-345678\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('creditRef', 'withdraw_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "if (d.payment_id) pm.collectionVariables.set('creditPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('creditRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payout — Nagad",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Payout to a Nagad wallet (`nagadWallet`). Same contract as bKash, different `route_network`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"nagad\",\n  \"merchant_ref\": \"{{creditRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"{{nagadWallet}}\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('creditRef', 'withdraw_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('route_kind = wallet', () => pm.expect(d.route_kind).to.eql('wallet'));",
+                  "pm.test('route_network = nagad', () => pm.expect(d.route_network).to.eql('nagad'));",
+                  "if (d.payment_id) pm.collectionVariables.set('creditPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('creditRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payout — bank account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Payout to a bank account. Set `bankCode` (from the bank directory), `bankAccount` and `routingNumber` in the environment. `payee_title` is required for bank payouts.\n\nBEFTN payouts run on business days only (weekend: Fri–Sat) — `queued` can last until the next business day. Do not cancel or re-send.\n\n⚠️ In Production this sends real money.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{bankPayoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"bank\",\n  \"route_network\": \"{{bankCode}}\",\n  \"merchant_ref\": \"{{creditRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"account_number\": \"{{bankAccount}}\",\n    \"payee_title\": \"Rahim Uddin\",\n    \"routing_number\": \"{{routingNumber}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('creditRef', 'withdraw_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});",
+                  "pm.test('route_kind = bank', () => pm.expect(d.route_kind).to.eql('bank'));",
+                  "if (d.payment_id) pm.collectionVariables.set('creditPaymentId', d.payment_id);",
+                  "if (d.merchant_ref) pm.collectionVariables.set('creditRef', d.merchant_ref);",
+                  "console.log('posting_state:', d.posting_state, '| payment_id:', d.payment_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payout state (by payment_id)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{creditPaymentId}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{creditPaymentId}}",
+                "state"
+              ]
+            },
+            "description": "Uses `creditPaymentId` saved by the last *Create payout*."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payout state (by merchant_ref)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{creditRef}}/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{creditRef}}",
+                "state"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test('Not an error envelope', () => pm.expect(d.ok).to.not.eql(false));",
+                  "pm.test('Payment object shape', () => {",
+                  "  pm.expect(d).to.include.keys('payment_id', 'merchant_ref', 'posting_state', 'order_amount', 'order_currency');",
+                  "  pm.expect(['received','queued','posted','part_posted','unposted','returned']).to.include(d.posting_state);",
+                  "  pm.expect(d.order_amount).to.be.a('string');",
+                  "  pm.expect(d.order_currency).to.eql('BDT');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
-      "name": "Partner",
+      "name": "3. Balance",
+      "description": "Docs: https://github.com/grosspay-bd/doc/blob/main/docs/09-balance.md",
       "item": [
         {
           "name": "Get balance",
@@ -292,8 +778,780 @@
                 "ledger_balance"
               ]
             },
+            "description": "Merchant balance. Check it before payout batches."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Balance shape', () => { pm.expect(d.available_balance).to.be.a('string'); pm.expect(d.curr_alpha).to.eql('BDT'); });",
+                  "console.log('available_balance:', d.available_balance, d.curr_alpha);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Disputes",
+      "description": "Docs: https://github.com/grosspay-bd/doc/blob/main/docs/08-disputes.md",
+      "item": [
+        {
+          "name": "Escalate deposit",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{debitPaymentId}}/escalate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{debitPaymentId}}",
+                "escalate"
+              ]
+            },
+            "description": "**Before sending:** in the *Body* tab select a receipt file for `file1` (1–3 files total). Do not set Content-Type manually.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file1",
+                  "type": "file",
+                  "src": [],
+                  "description": "Required. PDF / JPEG / PNG, ≤ 5 MB"
+                },
+                {
+                  "key": "file2",
+                  "type": "file",
+                  "src": [],
+                  "disabled": true,
+                  "description": "Optional"
+                },
+                {
+                  "key": "file3",
+                  "type": "file",
+                  "src": [],
+                  "disabled": true,
+                  "description": "Optional"
+                },
+                {
+                  "key": "comment",
+                  "type": "text",
+                  "value": "Paid via bKash, TrxID 9A1B2C3D4E, 1000 BDT"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('escalated = true', () => pm.expect(d.escalated).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Negative tests",
+      "description": "Expected errors — use them to check your error handling. Docs: https://github.com/grosspay-bd/doc/blob/main/docs/07-errors.md",
+      "item": [
+        {
+          "name": "Invalid bKash number → 474",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Wallet `0171234` is too short → business error `474`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"0171234\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.class = declined', () => pm.expect(d.fault.class).to.eql('declined'));",
+                  "pm.test('fault.code = 474', () => pm.expect(String(d.fault.code)).to.eql('474'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong operator prefix (012…) → 474",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Third digit must be 3–9.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"01212345678\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.code = 474', () => pm.expect(String(d.fault.code)).to.eql('474'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid Nagad number → 474",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"nagad\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"018123\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.code = 474', () => pm.expect(String(d.fault.code)).to.eql('474'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid holder_account → 474",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "`holder_account` is validated with the same rules as payout wallet numbers.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"nagad\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\",\n  \"holder_account\": \"0181\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.code = 474', () => pm.expect(String(d.fault.code)).to.eql('474'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bank payout without route_network → validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "`route_network` (bank code) is required for `route_kind: bank`. The same error with `fault.at: [\"route_network\"]` is returned for any method/network not enabled for your account.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{bankPayoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"bank\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"account_number\": \"{{bankAccount}}\",\n    \"payee_title\": \"Rahim Uddin\",\n    \"routing_number\": \"{{routingNumber}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.class = validation', () => pm.expect(d.fault.class).to.eql('validation'));",
+                  "console.log('fault:', JSON.stringify(d.fault));",
+                  "pm.test('fault.at includes route_network', () => pm.expect(d.fault.at).to.include('route_network'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bank payout without payee_title → validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{bankPayoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"bank\",\n  \"route_network\": \"{{bankCode}}\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"account_number\": \"{{bankAccount}}\",\n    \"routing_number\": \"{{routingNumber}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.class = validation', () => pm.expect(d.fault.class).to.eql('validation'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing Bearer prefix → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/ledger_balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "ledger_balance"
+              ]
+            },
+            "description": "Sends `Authorization: <API_KEY>` without `Bearer ` — must be rejected with 403.",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "Authorization",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "{{apiKey}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('HTTP 403', () => pm.expect(pm.response.code).to.be.oneOf([403]));",
+                  "pm.test('fault.class = unauthorized', () => pm.expect(d.fault.class).to.eql('unauthorized'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid API key → 401/403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/ledger_balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "ledger_balance"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "invalid-key",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('HTTP 401, 403', () => pm.expect(pm.response.code).to.be.oneOf([401, 403]));",
+                  "pm.test('fault.class = unauthorized', () => pm.expect(d.fault.class).to.eql('unauthorized'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing required field → validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "`holder_ref` is missing → `fault.class: validation`, field listed in `fault.at`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"1000.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.class = validation', () => pm.expect(d.fault.class).to.eql('validation'));",
+                  "console.log('fault:', JSON.stringify(d.fault));",
+                  "pm.test('fault.at lists fields', () => pm.expect(d.fault.at).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "merchant_ref too short → validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "`merchant_ref` must be 5–64 characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"abc\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.class = validation', () => pm.expect(d.fault.class).to.eql('validation'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Amount below minimum → 475",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "Adjust the amount to just below your account minimum if 1.00 is allowed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"1.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.code = 475', () => pm.expect(String(d.fault.code)).to.eql('475'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Amount above maximum → 476",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "init"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_amount\": \"99999999.00\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{tmpRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('tmpRef', 'neg_bd_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const d = pm.response.json();",
+                  "pm.test('Error envelope', () => { pm.expect(d.ok).to.eql(false); pm.expect(d.fault).to.be.an('object'); });",
+                  "pm.test('fault.code = 476', () => pm.expect(String(d.fault.code)).to.eql('476'));",
+                  "console.log('fault:', JSON.stringify(d.fault));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown payment → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/does_not_exist_000/state",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "does_not_exist_000",
+                "state"
+              ]
+            },
             "description": ""
-          }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

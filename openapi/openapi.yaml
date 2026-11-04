@@ -1,17 +1,22 @@
 openapi: 3.0.3
 info:
-  title: GrossPay API — Bangladesh (BDT · bKash)
-  version: "1.0.0"
+  title: GrossPay API — Bangladesh (BDT)
+  version: "1.1.0"
   description: |
-    Merchant API for bKash deposits (pay-in, `intent: debit`) and bKash payouts
+    Merchant API for deposits (pay-in, `intent: debit`) and payouts
     (pay-out, `intent: credit`) in Bangladesh.
+
+    * Method and network are selected by `route_kind` + `route_network`:
+      pay-in `wallet` (bkash / nagad / rocket / upay), `banglaqr` (bkash / nagad), `card`;
+      pay-out `wallet` (bkash / nagad / rocket / upay), `bank` (bank code).
+      `wallet` without `route_network` = `bkash` (backward compatible).
 
     * All amounts are decimal **strings** (`"1000.00"`).
     * Authentication: `Authorization: Bearer <API_KEY>` on every request
       (without the `Bearer ` prefix the request is rejected with `403`).
     * Pay-ins work only through the hosted payment page (`hosted_url`);
       host-to-host (`silent_mode`) is not available for Bangladesh.
-    * Webhooks are sent to `callback_uri` on every state change, from IP
+    * Webhooks are sent to `callback_uri` on state changes (always for final states), from IP
       `136.148.218.118`, signed with RSA PKCS#1 v1.5 / SHA-256 over the raw body
       (header `signature-v1`, base64).
 
@@ -43,8 +48,12 @@ paths:
       description: |
         One endpoint for both directions, selected by `intent`:
 
-        * `debit` — **pay-in**. Redirect the payer to `hosted_url`; they pay via bKash and enter the TrxID.
-        * `credit` — **pay-out** to a personal bKash wallet (`credit_details.wallet_number`).
+        * `debit` — **pay-in**. Redirect the payer to `hosted_url`. Method: `route_kind` `wallet` / `banglaqr` / `card`.
+        * `credit` — **pay-out** to a wallet (`route_kind: wallet`, `credit_details.wallet_number`)
+          or a bank account (`route_kind: bank`, bank code in `route_network`, `credit_details.account_number`).
+
+        A `route_kind` + `route_network` pair that is not enabled for the merchant returns a
+        validation error with `fault.at: ["route_network"]`.
 
         `merchant_ref` is the idempotency key. After a timeout, check
         `GET /payments/{merchant_ref}/state` before repeating the request with the same `merchant_ref`.
@@ -63,30 +72,97 @@ paths:
                   credit: '#/components/schemas/CreditRequest'
             examples:
               debit:
-                summary: Pay-in (deposit) via hosted page
+                summary: Pay-in — bKash wallet
                 value:
                   order_amount: "1000.00"
                   order_currency: BDT
                   intent: debit
                   route_kind: wallet
+                  route_network: bkash
                   merchant_ref: order_bd_0001
                   holder_ref: user_bd_001
                   holder_name: Rahim Uddin
                   callback_uri: https://your-site.com/webhooks/grosspay
                   return_uri: https://your-site.com/deposit/finished
+              debit_nagad:
+                summary: Pay-in — Nagad wallet with holder_account
+                value:
+                  order_amount: "1000.00"
+                  order_currency: BDT
+                  intent: debit
+                  route_kind: wallet
+                  route_network: nagad
+                  holder_account: "01812345678"
+                  merchant_ref: order_bd_0002
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  return_uri: https://your-site.com/deposit/finished
+              debit_banglaqr:
+                summary: Pay-in — BanglaQR (bKash)
+                value:
+                  order_amount: "1000.00"
+                  order_currency: BDT
+                  intent: debit
+                  route_kind: banglaqr
+                  route_network: bkash
+                  merchant_ref: order_bd_0003
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  return_uri: https://your-site.com/deposit/finished
+              debit_card:
+                summary: Pay-in — card
+                value:
+                  order_amount: "1000.00"
+                  order_currency: BDT
+                  intent: debit
+                  route_kind: card
+                  merchant_ref: order_bd_0004
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  return_uri: https://your-site.com/deposit/finished
               credit:
-                summary: Pay-out (withdrawal) to bKash
+                summary: Pay-out — bKash wallet
                 value:
                   order_amount: "1500.00"
                   order_currency: BDT
                   intent: credit
                   route_kind: wallet
+                  route_network: bkash
                   merchant_ref: withdraw_bd_0001
                   holder_ref: user_bd_001
                   callback_uri: https://your-site.com/webhooks/grosspay
                   credit_details:
                     wallet_number: "01712345678"
                     payee_title: Rahim Uddin
+              credit_nagad:
+                summary: Pay-out — Nagad wallet
+                value:
+                  order_amount: "1500.00"
+                  order_currency: BDT
+                  intent: credit
+                  route_kind: wallet
+                  route_network: nagad
+                  merchant_ref: withdraw_bd_0002
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  credit_details:
+                    wallet_number: "01812345678"
+                    payee_title: Rahim Uddin
+              credit_bank:
+                summary: Pay-out — bank account
+                value:
+                  order_amount: "25000.00"
+                  order_currency: BDT
+                  intent: credit
+                  route_kind: bank
+                  route_network: "<bank_code>"
+                  merchant_ref: withdraw_bd_0003
+                  holder_ref: user_bd_001
+                  callback_uri: https://your-site.com/webhooks/grosspay
+                  credit_details:
+                    account_number: "1234567890123"
+                    payee_title: Rahim Uddin
+                    routing_number: "123456789"
       responses:
         '200':
           description: Payment created
@@ -102,6 +178,8 @@ paths:
                     hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
                     merchant_ref: order_bd_0001
                     posting_state: received
+                    route_kind: wallet
+                    route_network: bkash
                     client_amount: null
                     decline_note: null
                     order_amount: "1000.00"
@@ -116,13 +194,18 @@ paths:
                     payment_id: 01a15d02-3b9e-7c11-8a4f-5e2d9c1b7a60
                     merchant_ref: withdraw_bd_0001
                     posting_state: received
+                    route_kind: wallet
+                    route_network: bkash
+                    rail_ref: null
                     client_amount: null
                     decline_note: null
                     order_amount: "1500.00"
                     order_currency: BDT
                     booked_at: "2026-10-21T06:02:11.410Z"
                     posted_at: null
-                    payee_details: null
+                    payee_details:
+                      wallet_number: "01712345678"
+                      payee_title: Rahim Uddin
                     valid_through: null
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -166,7 +249,10 @@ paths:
                       hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
                       merchant_ref: order_bd_0001
                       posting_state: posted
+                      route_kind: wallet
+                      route_network: bkash
                       amount_posted: "1000.00"
+                      rail_ref: 9A1B2C3D4E
                       client_amount: null
                       decline_note: null
                       order_amount: "1000.00"
@@ -217,7 +303,10 @@ paths:
                 hosted_url: https://pay.example/cmvhoj1x300001bo7cdylcnm8
                 merchant_ref: order_bd_0001
                 posting_state: posted
+                route_kind: wallet
+                route_network: bkash
                 amount_posted: "1000.00"
+                rail_ref: 9A1B2C3D4E
                 client_amount: null
                 decline_note: null
                 order_amount: "1000.00"
@@ -342,7 +431,14 @@ components:
           enum: [debit, credit]
         route_kind:
           type: string
-          enum: [wallet]
+          description: Payment method — see DebitRequest / CreditRequest for allowed values
+        route_network:
+          type: string
+          description: |
+            Network or bank code, lowercase. Wallets: `bkash`, `nagad`, `rocket`, `upay`.
+            For `route_kind: wallet` defaults to `bkash` when omitted. Required for `bank`.
+            Not sent for `card`. New values may be added without a new API version.
+          example: bkash
         merchant_ref:
           type: string
           minLength: 5
@@ -370,6 +466,20 @@ components:
             intent:
               type: string
               enum: [debit]
+            route_kind:
+              type: string
+              enum: [wallet, banglaqr, card]
+              description: "`wallet` — wallet transfer; `banglaqr` — QR scan in the wallet app; `card` — card payment"
+            route_network:
+              type: string
+              enum: [bkash, nagad, rocket, upay]
+              description: "`wallet`: bkash (default) / nagad / rocket / upay. `banglaqr`: bkash / nagad. `card`: do not send."
+            holder_account:
+              type: string
+              description: |
+                Optional. Payer's wallet number the customer will pay from. Normalised by the
+                network's rules (`8801712345678` → `01712345678`); invalid format → error `474`.
+              example: "01812345678"
             holder_name:
               type: string
               description: Payer's name (optional)
@@ -381,7 +491,7 @@ components:
               example: https://your-site.com/deposit/finished
 
     CreditRequest:
-      description: Pay-out (withdrawal) to a personal bKash wallet
+      description: Pay-out (withdrawal) to a mobile wallet or a bank account
       allOf:
         - $ref: '#/components/schemas/BaseRequest'
         - type: object
@@ -390,23 +500,54 @@ components:
             intent:
               type: string
               enum: [credit]
+            route_kind:
+              type: string
+              enum: [wallet, bank]
+              description: "`wallet` — to a wallet number; `bank` — to a bank account (bank code in `route_network`, required)"
             credit_details:
-              $ref: '#/components/schemas/CreditDetails'
+              oneOf:
+                - $ref: '#/components/schemas/WalletCreditDetails'
+                - $ref: '#/components/schemas/BankCreditDetails'
 
-    CreditDetails:
+    WalletCreditDetails:
       type: object
+      description: "Recipient details for `route_kind: wallet`"
       required: [wallet_number]
       properties:
         wallet_number:
           type: string
           description: |
-            Recipient bKash number. Accepted as `01712345678`, `8801712345678` or `+880 1712-345678`.
-            After normalisation it must match `^01[3-9]\d{8}$`, otherwise error `474`.
+            Recipient wallet number. Accepted as `01712345678`, `8801712345678` or `+880 1712-345678`.
+            After normalisation: bkash / nagad / upay `^01[3-9]\d{8}$`; rocket `^01[3-9]\d{9}$`
+            (number + check digit). Otherwise error `474`.
           example: "01712345678"
         payee_title:
           type: string
           description: Recipient's name (optional)
           example: Rahim Uddin
+
+    BankCreditDetails:
+      type: object
+      description: "Recipient details for `route_kind: bank`"
+      required: [account_number, payee_title]
+      properties:
+        account_number:
+          type: string
+          pattern: '^\d+$'
+          description: Digits only; length is checked per bank. Invalid → error `474`.
+          example: "1234567890123"
+        payee_title:
+          type: string
+          description: Account holder name exactly as registered at the bank (required for bank payouts)
+          example: Rahim Uddin
+        routing_number:
+          type: string
+          pattern: '^\d{9}$'
+          description: 9-digit routing number; required for some banks (see the bank directory)
+          example: "123456789"
+        branch_name:
+          type: string
+          description: Branch name (optional)
 
     PostingState:
       type: string
@@ -438,6 +579,25 @@ components:
           example: order_bd_0001
         posting_state:
           $ref: '#/components/schemas/PostingState'
+        route_kind:
+          type: string
+          description: Payment method from the request (`wallet`, `banglaqr`, `card`, `bank`)
+          example: wallet
+        route_network:
+          type: string
+          nullable: true
+          description: Network or bank code from the request; `bkash` for wallet requests sent without it; null for `card`
+          example: bkash
+        rail_ref:
+          type: string
+          nullable: true
+          description: Wallet TrxID or bank reference of the transfer; for reconciliation and disputes
+          example: 9A1B2C3D4E
+        holder_account:
+          type: string
+          nullable: true
+          description: "Pay-in only: payer's wallet / account number — from the request or the actual one; may be masked"
+          example: "018*****678"
         order_amount:
           $ref: '#/components/schemas/Amount'
         order_currency:
@@ -468,12 +628,12 @@ components:
           type: object
           nullable: true
           additionalProperties: true
-          description: Payment / recipient details when applicable; null for hosted-page pay-ins
+          description: "Pay-outs: normalised recipient details (same keys as `credit_details`). Null for pay-ins."
         valid_through:
           type: string
           format: date-time
           nullable: true
-          description: Deadline to complete the payment, when set
+          description: "Pay-ins: deadline for the payer to complete the payment; after it the payment ends as `unposted`"
 
     ErrorEnvelope:
       type: object

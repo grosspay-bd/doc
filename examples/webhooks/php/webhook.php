@@ -3,7 +3,7 @@
  * GrossPay webhook receiver — plain PHP (7.4+ / 8.x, ext-openssl, ext-json)
  *
  * Local test:
- *   GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=../../../keys/sandbox-test-merchant.test.pem \
+ *   GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=/path/to/grosspay_webhook_public.pem \
  *   GROSSPAY_ALLOWED_IPS='*' php -S 127.0.0.1:3000 webhook.php
  *
  * Production: point your callback_uri route at this file (nginx/Apache), keep the

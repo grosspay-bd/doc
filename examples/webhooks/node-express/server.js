@@ -2,7 +2,7 @@
  * GrossPay webhook receiver — Node.js + Express
  *
  *   npm install
- *   GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=../../../keys/sandbox-test-merchant.test.pem node server.js
+ *   GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=/path/to/grosspay_webhook_public.pem node server.js
  *
  * Env:
  *   GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE  path to the PEM public key (required)

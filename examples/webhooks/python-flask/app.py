@@ -2,7 +2,7 @@
 GrossPay webhook receiver — Python + Flask
 
     pip install -r requirements.txt
-    GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=../../../keys/sandbox-test-merchant.test.pem flask --app app run --port 3000
+    GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=/path/to/grosspay_webhook_public.pem flask --app app run --port 3000
 
 Env:
     GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE  path to the PEM public key (required)
