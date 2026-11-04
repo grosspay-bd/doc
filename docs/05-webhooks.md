@@ -15,7 +15,9 @@
 
 ## Overview
 
-Every time a payment's state changes, GrossPay sends an HTTP `POST` to the `callback_uri` you passed in `POST /payments/init`.
+When a payment's state changes, GrossPay sends an HTTP `POST` to the `callback_uri` you passed in `POST /payments/init`.
+
+> **Expect webhooks for final states** (`posted`, `part_posted`, `unposted`, `returned`). Webhooks for the intermediate states `received` and `queued` are **not guaranteed** — your handler must not wait for them or require them. To see an intermediate state, use [`GET /state`](04-payment-status.md).
 
 Webhooks are **the primary source of truth** for payment results. `GET /state` is cached and is meant for recovery and reconciliation only ([why](04-payment-status.md#status-is-cached--webhooks-are-the-source-of-truth)).
 
@@ -29,7 +31,7 @@ Webhooks are **the primary source of truth** for payment results. `GET /state` i
 | Body | The full payment object — identical in structure to `GET /payments/{id}/state` |
 | Signature header | `signature-v1` — base64 RSA signature of the raw body (PKCS#1 v1.5, SHA-256) |
 | Sender IP | `136.148.218.118` (same for Test and Production) |
-| Trigger | Every change of payment state |
+| Trigger | State changes; always for final states, intermediate states may be skipped |
 | Retries | Until your endpoint answers `2xx` (or `405`, see below) |
 
 ### Example request
@@ -40,7 +42,7 @@ Host: your-site.com
 Content-Type: application/json
 signature-v1: k3J9...base64...==
 
-{"payment_id":"01a15cf5-f7c2-78b1-9276-87ea2c018577","hosted_url":"https://...","merchant_ref":"order_bd_0001","posting_state":"posted","amount_posted":"1000.00","client_amount":null,"decline_note":null,"order_amount":"1000.00","order_currency":"BDT","booked_at":"2026-10-21T05:36:26.058Z","posted_at":"2026-10-21T05:41:02.511Z","payee_details":null,"valid_through":null}
+{"payment_id":"01a15cf5-f7c2-78b1-9276-87ea2c018577","hosted_url":"https://...","merchant_ref":"order_bd_0001","posting_state":"posted","route_kind":"wallet","route_network":"bkash","amount_posted":"1000.00","rail_ref":"9A1B2C3D4E","holder_account":"017*****678","client_amount":null,"decline_note":null,"order_amount":"1000.00","order_currency":"BDT","booked_at":"2026-10-21T05:36:26.058Z","posted_at":"2026-10-21T05:41:02.511Z","payee_details":null,"valid_through":null}
 ```
 
 The same body, formatted for reading:
@@ -51,7 +53,11 @@ The same body, formatted for reading:
   "hosted_url": "https://...",
   "merchant_ref": "order_bd_0001",
   "posting_state": "posted",
+  "route_kind": "wallet",
+  "route_network": "bkash",
   "amount_posted": "1000.00",
+  "rail_ref": "9A1B2C3D4E",
+  "holder_account": "017*****678",
   "client_amount": null,
   "decline_note": null,
   "order_amount": "1000.00",
