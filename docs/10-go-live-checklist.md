@@ -1,6 +1,6 @@
 # 10 · Go-live checklist
 
-← [Balance](09-balance.md) · [Back to README](../README.md)
+← [Balance](09-balance.md) · Next: [Payment methods & networks](11-payment-methods.md) →
 
 Complete every item in the **Test** environment (`api-test.grosspayme.com`) before requesting Production credentials. Copy this file into your ticket and tick the boxes.
 
@@ -27,12 +27,15 @@ Complete every item in the **Test** environment (`api-test.grosspayme.com`) befo
 
 ## 3. Pay-out (credit)
 
-- [ ] bKash number normalised and validated (`^01[3-9]\d{8}$`) before the call
+- [ ] `route_kind` + `route_network` sent explicitly in every request; only pairs enabled for your account are offered to customers
+- [ ] Wallet numbers normalised and validated per network before the call ([formats](11-payment-methods.md#wallet-number-formats))
 - [ ] Customer funds held **before** the payout request
 - [ ] Hold released on `unposted`
 - [ ] Money returned to the customer on `posted → returned`
 - [ ] Timeout handling uses `GET /payments/{merchant_ref}/state` before retrying — no new `merchant_ref` for a retry
-- [ ] Error `474` shown as "invalid bKash number"
+- [ ] Error `474` shown as "invalid wallet number / bank account"
+- [ ] Bank payouts: `payee_title` always sent, `routing_number` sent where the bank requires it
+- [ ] Bank payouts: no cancel / re-send while `queued` (BEFTN waits for the next business day; weekend = Fri–Sat)
 
 ## 4. Webhooks
 
@@ -57,7 +60,7 @@ Complete every item in the **Test** environment (`api-test.grosspayme.com`) befo
 
 ## Test scenarios
 
-Run each scenario in Test and record the `payment_id`. Scenarios that depend on the payment outcome (T4, T10) may need to be triggered by GrossPay support in Test — ask your manager, or cover them with signed test webhooks (W-scenarios below).
+Run each scenario in Test and record the `payment_id`. Scenarios that depend on the payment outcome (T4, T10, T17) may need to be triggered by GrossPay support in Test — ask your manager, or cover them with signed test webhooks (W-scenarios below).
 
 | # | Scenario | Expected result in your system |
 |---|---|---|
@@ -73,6 +76,11 @@ Run each scenario in Test and record the `payment_id`. Scenarios that depend on 
 | T10 | Payout `posted`, then `returned` | Customer gets 1500.00 back |
 | T11 | `POST /payments/init` timeout simulated (kill connection) | Recovery via `GET /payments/{merchant_ref}/state`, single payment |
 | T12 | Escalate a payment with 1 receipt | `{"escalated": true}` |
+| T13 | Nagad deposit (`route_kind: wallet`, `route_network: nagad`) | Hosted page for Nagad; webhook `posted`, credit = `amount_posted`; `route_network` in the object = `nagad` |
+| T14 | Deposit with `holder_account` | `holder_account` returned in the payment object (may be masked); invalid number → `474` |
+| T15 | Nagad payout | Hold → `posted` → final debit; `payee_details.wallet_number` normalised |
+| T16 | Bank payout (`route_kind: bank`, bank code in `route_network`) | Hold kept while `queued` (may last to next business day) → `posted`; `rail_ref` stored |
+| T17 | Bank payout `posted`, then `returned` | Customer gets the amount back |
 
 ### Webhook scenarios
 
