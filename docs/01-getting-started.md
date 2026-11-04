@@ -40,7 +40,7 @@ Switching environments means switching **three** values together — never mix t
 | **API key** | Authenticating *your* requests to GrossPay | Server-side secret store only |
 | **Webhook public key** (RSA, PEM) | Verifying that callbacks really come from GrossPay | Server config; it is public, not secret |
 
-Each merchant has its own webhook public key; it is issued together with the API key. Public keys of the shared **sandbox test merchant** are in [`/keys`](../keys) — use them only with that sandbox account.
+Each merchant has its own webhook public key; it is issued together with the API key.
 
 > **Security.** The API key grants full access to your merchant account (including payouts).
 > Never put it in front-end code, mobile apps, Git repositories, tickets or chat messages. If a key leaks, ask your manager to rotate it immediately.
@@ -81,15 +81,24 @@ There is **one** endpoint to create payments — `POST /payments/init`. The dire
 | `debit` | **Pay-in / deposit** | Customer → you | Customer pays on the hosted page |
 | `credit` | **Pay-out / withdrawal** | You → customer | None, fully server-to-server |
 
-### Rail: `route_kind` and currency
+### Method and network: `route_kind` + `route_network`
 
-For Bangladesh always send:
+The currency is always `"BDT"`. The payment method and network are set by two fields:
+
+| Field | Values |
+|---|---|
+| `route_kind` — method | `wallet` (mobile wallet), `banglaqr` (QR pay-in), `card` (card pay-in), `bank` (bank account payout) |
+| `route_network` — network | `bkash`, `nagad`, `rocket`, `upay`, or a bank code for `bank` |
 
 ```json
-{ "order_currency": "BDT", "route_kind": "wallet" }
+{ "order_currency": "BDT", "route_kind": "wallet", "route_network": "nagad" }
 ```
 
-Do **not** send `route_network` for Bangladesh — the rail is bKash by default.
+- You choose the method and network; the customer does not choose anything on the payment page.
+- `route_kind: "wallet"` without `route_network` = **bKash** (backward compatible).
+- Which pairs are enabled for your account is configured by GrossPay.
+
+Full matrix, number formats and bank directory: [Payment methods & networks](11-payment-methods.md).
 
 ### Your identifiers
 
@@ -103,7 +112,7 @@ Do **not** send `route_network` for Bangladesh — the rail is bKash by default.
 
 ### Hosted page vs. host-to-host
 
-For Bangladesh **pay-ins work only through the hosted payment page** (`hosted_url`). Host-to-host mode (`silent_mode`) is **not available** — do not send it and do not try to render payment details yourself.
+For Bangladesh **pay-ins work only through the hosted payment page** (`hosted_url`) — for every method (wallet, BanglaQR, card). Host-to-host mode (`silent_mode`) is **not available** — do not send it and do not try to render payment details yourself.
 
 ---
 
