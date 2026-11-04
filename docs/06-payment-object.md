@@ -20,6 +20,8 @@ The **payment object** is returned by `POST /payments/init`, by `GET /payments/{
 | `merchant_ref` | string | always | Your ID from the request (idempotency key). |
 | `hosted_url` | string \| null | pay-in only | Hosted payment page URL. Not present for payouts. |
 | `posting_state` | string (enum) | always | Current state, see [below](#posting_state-values). |
+| `route_kind` | string | always | Payment method from your request: `wallet`, `banglaqr`, `card`, `bank`. |
+| `route_network` | string \| null | always (may be `null`) | Network or bank code from your request (`bkash`, `nagad`, …). `null` for `card`. For `wallet` requests sent without it — `bkash`. |
 | `order_amount` | string (decimal) | always | Amount you requested. **Never changes.** |
 | `order_currency` | string | always | `"BDT"` |
 | `amount_posted` | string (decimal) | after booking | Amount **actually** booked. Appears once the payment is booked. The amount you credit/debit. |
@@ -27,8 +29,10 @@ The **payment object** is returned by `POST /payments/init`, by `GET /payments/{
 | `decline_note` | string \| null | always (may be `null`) | Human-readable reason when the payment is `unposted` / `returned`. For logs and support — **do not parse it**; it can change wording. |
 | `booked_at` | string (ISO 8601, UTC) | always | When the payment was created. |
 | `posted_at` | string (ISO 8601, UTC) \| null | always (may be `null`) | When the payment was booked; `null` before that. |
-| `payee_details` | object \| null | always (may be `null`) | Payment/recipient details, when applicable. `null` for hosted-page pay-ins. |
-| `valid_through` | string (ISO 8601, UTC) \| null | always (may be `null`) | Deadline for the payer to complete the payment, when set. |
+| `rail_ref` | string \| null | always (may be `null`) | Reference of the transfer in the wallet / bank system: wallet **TrxID** or bank reference. Appears once the transfer is known. Store it for reconciliation and disputes. |
+| `holder_account` | string \| null | pay-in only (may be `null`) | Payer's wallet / account number — the one you sent in the request, or the one the customer actually paid from. **May be masked.** |
+| `payee_details` | object \| null | always (may be `null`) | **Pay-outs:** the normalised recipient details (same keys as `credit_details`, e.g. `wallet_number` or `account_number` + `payee_title` + `routing_number`). `null` for pay-ins. |
+| `valid_through` | string (ISO 8601, UTC) \| null | always (may be `null`) | Pay-ins: deadline for the payer to complete the payment. After it the payment ends as `unposted`. |
 
 **Rules for your parser**
 
@@ -130,6 +134,10 @@ For payouts apply the same logic to the debit, with a hold created when the payo
   "hosted_url": "https://pay.example/cmvhoj1x300001bo7cdylcnm8",
   "merchant_ref": "order_bd_0001",
   "posting_state": "received",
+  "route_kind": "wallet",
+  "route_network": "bkash",
+  "rail_ref": null,
+  "holder_account": null,
   "client_amount": null,
   "decline_note": null,
   "order_amount": "1000.00",
@@ -149,7 +157,11 @@ For payouts apply the same logic to the debit, with a hold created when the payo
   "hosted_url": "https://pay.example/cmvhoj1x300001bo7cdylcnm8",
   "merchant_ref": "order_bd_0001",
   "posting_state": "posted",
+  "route_kind": "wallet",
+  "route_network": "bkash",
   "amount_posted": "1000.00",
+  "rail_ref": "9A1B2C3D4E",
+  "holder_account": "017*****678",
   "client_amount": null,
   "decline_note": null,
   "order_amount": "1000.00",
@@ -208,6 +220,29 @@ Credit **700.00**, not 1000.00.
 ```
 
 Reverse whatever you credited for this payment.
+
+### `posted` — bank payout (illustrative)
+
+```json
+{
+  "payment_id": "01a15d02-3b9e-7c11-8a4f-5e2d9c1b7a60",
+  "merchant_ref": "withdraw_bd_0003",
+  "posting_state": "posted",
+  "route_kind": "bank",
+  "route_network": "<bank_code>",
+  "amount_posted": "25000.00",
+  "rail_ref": "NPSB2611041234567",
+  "order_amount": "25000.00",
+  "order_currency": "BDT",
+  "booked_at": "2026-11-04T08:10:00.000Z",
+  "posted_at": "2026-11-04T08:12:31.000Z",
+  "payee_details": {
+    "account_number": "1234567890123",
+    "payee_title": "Rahim Uddin",
+    "routing_number": "123456789"
+  }
+}
+```
 
 *Illustrative examples are shortened to the relevant fields; real payloads contain the full object.*
 
