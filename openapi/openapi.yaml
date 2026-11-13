@@ -12,6 +12,7 @@ info:
       `wallet` without `route_network` = `bkash` (backward compatible).
 
     * All amounts are decimal **strings** (`"1000.00"`).
+    * Player balance: `client_amount`. Merchant balance: `amount_posted` (payouts include the GrossPay fee).
     * Authentication: `Authorization: Bearer <API_KEY>` on every request
       (without the `Bearer ` prefix the request is rejected with `403`).
     * Pay-ins work only through the hosted payment page (`hosted_url`);
@@ -253,7 +254,7 @@ paths:
                       route_network: bkash
                       amount_posted: "1000.00"
                       rail_ref: 9A1B2C3D4E
-                      client_amount: null
+                      client_amount: "1000.00"
                       decline_note: null
                       order_amount: "1000.00"
                       order_currency: BDT
@@ -307,7 +308,7 @@ paths:
                 route_network: bkash
                 amount_posted: "1000.00"
                 rail_ref: 9A1B2C3D4E
-                client_amount: null
+                client_amount: "1000.00"
                 decline_note: null
                 order_amount: "1000.00"
                 order_currency: BDT
@@ -556,7 +557,7 @@ components:
         * `received` — created, waiting for payment
         * `queued` — payment confirmed, booking in progress
         * `posted` — fully booked (can later become `returned`)
-        * `part_posted` — partially booked; actual amount in `amount_posted`
+        * `part_posted` — partially booked; actual customer amount in `client_amount`
         * `unposted` — declined, cancelled or expired
         * `returned` — rolled back: reversal, refund or chargeback
 
@@ -603,15 +604,21 @@ components:
         order_currency:
           type: string
           example: BDT
-        amount_posted:
-          type: string
-          nullable: true
-          description: Amount actually booked; present once the payment is booked
-          example: "1000.00"
         client_amount:
           type: string
           nullable: true
-          description: Settlement amount for the merchant; null until known
+          description: |
+            Amount on the customer's side: pay-in — paid by the customer; pay-out — received by the customer.
+            **Book the player's balance by this field.** Null until the payment is booked.
+          example: "15000.00"
+        amount_posted:
+          type: string
+          nullable: true
+          description: |
+            Posting on the merchant balance at GrossPay: pay-in — the customer's payment (the fee is then
+            deducted from it); pay-out — debited from the merchant balance = payout + fee.
+            Use for merchant-balance reconciliation, NOT for the player's balance.
+          example: "15450.00"
         decline_note:
           type: string
           nullable: true

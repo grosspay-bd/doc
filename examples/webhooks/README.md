@@ -5,7 +5,7 @@ Three equivalent reference receivers. Each one:
 1. accepts `POST /webhooks/grosspay` only;
 2. checks the sender IP (`136.148.218.118` by default);
 3. verifies `signature-v1` against the **raw body** (RSA PKCS#1 v1.5, SHA-256);
-4. applies the payment state **idempotently** (duplicates and out-of-order events are safe);
+4. applies the payment state **idempotently** (duplicates and out-of-order events are safe), booking the player's balance by **`client_amount`** (never `amount_posted` — on payouts it includes the fee);
 5. answers `200` on success, `401`/`403` on rejected requests, `503` on internal errors (GrossPay retries).
 
 | Folder | Stack |
@@ -31,11 +31,15 @@ cd node-express && npm install && \
 #   or: cd php && GROSSPAY_WEBHOOK_PUBLIC_KEY_FILE=../test_public.pem GROSSPAY_ALLOWED_IPS='*' php -S 127.0.0.1:3000 webhook.php
 
 # 3. in another terminal, play a sequence of events
+#    args: <url> <posting_state> [client_amount] [amount_posted] [payment_id] [merchant_ref]
 ./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay received
 ./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay posted 1000.00
 ./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay posted 1000.00   # duplicate → no double credit
 ./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay queued           # stale → ignored
 ./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay returned         # credit reversed
+
+# payout of 15000 with a 450 fee: player must be debited 15000 (client_amount), not 15450 (amount_posted)
+./send-test-webhook.sh http://127.0.0.1:3000/webhooks/grosspay posted 15000.00 15450.00 01a1b1cc-684c-741b-b37f-5b7cf1981c0c withdraw_bd_0002
 ```
 
 The Node and Flask receivers expose `GET /debug/ledger` to inspect the result. **Remove it in production.**

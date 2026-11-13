@@ -35,7 +35,7 @@ FINAL = {"posted", "part_posted", "unposted", "returned"}
 NON_FINAL = {"received", "queued"}
 
 # ---- stand-in for your database ---------------------------------------------
-DB: dict[str, dict] = {}   # payment_id -> {posting_state, amount_posted, booked}
+DB: dict[str, dict] = {}   # payment_id -> {posting_state, client_amount, booked}
 LEDGER: list[dict] = []
 
 
@@ -50,29 +50,36 @@ def verify_signature(raw_body: bytes, signature_v1: str | None) -> bool:
 
 
 def target_amount(event: dict) -> Decimal:
-    """What should be booked for this payment in its current state."""
+    """What should be booked on the PLAYER's balance in the current state.
+
+    Always client_amount (paid / received by the customer) — never amount_posted,
+    which on payouts includes GrossPay's fee charged to the merchant balance.
+    """
     if event.get("posting_state") in ("posted", "part_posted"):
-        return Decimal(event.get("amount_posted") or "0")
+        if event.get("client_amount") is None:
+            raise ValueError(f"client_amount missing for {event.get('payment_id')}")
+        return Decimal(event["client_amount"])
     return Decimal("0")
 
 
 def apply_event(event: dict) -> str:
     """Idempotent, order-tolerant state application."""
     pid = event["payment_id"]
-    cur = DB.get(pid, {"posting_state": None, "amount_posted": None, "booked": Decimal("0")})
+    cur = DB.get(pid, {"posting_state": None, "client_amount": None, "booked": Decimal("0")})
 
-    if cur["posting_state"] == event.get("posting_state") and cur["amount_posted"] == event.get("amount_posted"):
+    if cur["posting_state"] == event.get("posting_state") and cur["client_amount"] == event.get("client_amount"):
         return "duplicate"
     if cur["posting_state"] in FINAL and event.get("posting_state") in NON_FINAL:
         return "stale (step back to non-final state ignored)"
 
     delta = target_amount(event) - cur["booked"]
     if delta != 0:
-        # Pay-in: +delta to customer balance. Pay-out: delta is the final debit.
+        # Pay-in: +delta to the player's balance. Pay-out: delta is the player's final debit.
         LEDGER.append({"payment_id": pid, "merchant_ref": event.get("merchant_ref"), "delta": str(delta)})
     DB[pid] = {
         "posting_state": event.get("posting_state"),
-        "amount_posted": event.get("amount_posted"),
+        "client_amount": event.get("client_amount"),
+        "amount_posted": event.get("amount_posted"),  # merchant-balance posting, reconciliation only
         "booked": cur["booked"] + delta,
     }
     return f"applied {cur['posting_state']} -> {event.get('posting_state')}, delta {delta}"

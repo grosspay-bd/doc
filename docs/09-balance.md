@@ -29,7 +29,8 @@ curl https://api-test.grosspayme.com/v1/partner/ledger_balance \
 
 ## Typical uses
 
-- **Before a payout batch** — make sure `available_balance` covers the sum of the payouts you are about to send, otherwise some of them will be rejected.
+- **Before a payout batch** — make sure `available_balance` covers the sum of the payouts you are about to send **plus GrossPay fees**, otherwise some of them will be rejected. Each payout debits your merchant balance by `amount_posted` = payout + fee ([Amounts and fees](06-payment-object.md#amounts-and-fees)).
+- **How it changes** — a deposit adds the customer's payment minus the fee; a payout subtracts the payout plus the fee. Fees per payment are shown in the merchant cabinet and export.
 - **Monitoring** — poll every few minutes and alert your finance team when the balance falls below a threshold, so payouts don't stop.
 - **Reconciliation** — compare with your internal ledger daily.
 

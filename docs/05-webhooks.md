@@ -42,7 +42,7 @@ Host: your-site.com
 Content-Type: application/json
 signature-v1: k3J9...base64...==
 
-{"payment_id":"01a15cf5-f7c2-78b1-9276-87ea2c018577","hosted_url":"https://...","merchant_ref":"order_bd_0001","posting_state":"posted","route_kind":"wallet","route_network":"bkash","amount_posted":"1000.00","rail_ref":"9A1B2C3D4E","holder_account":"017*****678","client_amount":null,"decline_note":null,"order_amount":"1000.00","order_currency":"BDT","booked_at":"2026-10-21T05:36:26.058Z","posted_at":"2026-10-21T05:41:02.511Z","payee_details":null,"valid_through":null}
+{"payment_id":"01a15cf5-f7c2-78b1-9276-87ea2c018577","hosted_url":"https://...","merchant_ref":"order_bd_0001","posting_state":"posted","route_kind":"wallet","route_network":"bkash","amount_posted":"1000.00","rail_ref":"9A1B2C3D4E","holder_account":"017*****678","client_amount":"1000.00","decline_note":null,"order_amount":"1000.00","order_currency":"BDT","booked_at":"2026-10-21T05:36:26.058Z","posted_at":"2026-10-21T05:41:02.511Z","payee_details":null,"valid_through":null}
 ```
 
 The same body, formatted for reading:
@@ -58,7 +58,7 @@ The same body, formatted for reading:
   "amount_posted": "1000.00",
   "rail_ref": "9A1B2C3D4E",
   "holder_account": "017*****678",
-  "client_amount": null,
+  "client_amount": "1000.00",
   "decline_note": null,
   "order_amount": "1000.00",
   "order_currency": "BDT",
@@ -277,7 +277,7 @@ on POST /webhooks/grosspay:
            WHERE payment_id = event.payment_id OR merchant_ref = event.merchant_ref
            FOR UPDATE
        if p not found                     → ROLLBACK, 503 (retry later)
-       if (p.posting_state, p.amount_posted) == (event.posting_state, event.amount_posted)
+       if (p.posting_state, p.client_amount) == (event.posting_state, event.client_amount)
                                           → COMMIT, 200   (duplicate, nothing to do)
        if event is a step BACK to a non-final state (received/queued)
           while p is already final        → COMMIT, 200   (stale, ignore)
@@ -285,23 +285,26 @@ on POST /webhooks/grosspay:
        new_booked = booked_amount(event)  // see table below
        apply_ledger_delta(new_booked - old_booked)
        p.posting_state = event.posting_state
-       p.amount_posted = event.amount_posted
+       p.client_amount = event.client_amount
+       p.amount_posted = event.amount_posted   // keep for merchant-balance reconciliation
        save raw event to payment_events (audit log)
      COMMIT
   6. → 200
 ```
 
-`booked_amount` — how much should be booked for the customer for a given state:
+`booked_amount` — how much should be booked on the **player's** balance for a given state. Always `client_amount`, never `amount_posted` ([why](06-payment-object.md#amounts-and-fees)):
 
-| `posting_state` | Pay-in (debit): customer credited | Pay-out (credit): customer debited |
+| `posting_state` | Pay-in (debit): player credited | Pay-out (credit): player debited |
 |---|---|---|
-| `received`, `queued` | `0` | `0` final debit (amount still on hold) |
-| `posted` | `amount_posted` | `amount_posted` |
-| `part_posted` | `amount_posted` | `amount_posted` |
-| `unposted` | `0` | `0` (release hold) |
+| `received`, `queued` | `0` | `0` final debit (amount still reserved) |
+| `posted` | `client_amount` | `client_amount` |
+| `part_posted` | `client_amount` | `client_amount` (return the rest of the reserve) |
+| `unposted` | `0` | `0` (return the reserve) |
 | `returned` | `0` (reverse what was credited) | `0` (give money back) |
 
-With this approach every transition — including `posted → returned` and any later correction of `amount_posted` — is handled by the same code, without special cases.
+With this approach every transition — including `posted → returned` and any later correction of the amount — is handled by the same code, without special cases.
+
+> If a webhook in `posted` / `part_posted` arrives with `client_amount: null`, don't book anything: respond `503` (the webhook will be re-sent), log it and contact support with the `payment_id`.
 
 ---
 
@@ -314,7 +317,7 @@ With this approach every transition — including `posted → returned` and any 
    ```bash
    openssl genrsa -out test_private.pem 2048
    openssl rsa -in test_private.pem -pubout -out test_public.pem
-   printf '%s' '{"payment_id":"test-1","merchant_ref":"order_bd_0001","posting_state":"posted","amount_posted":"1000.00","order_amount":"1000.00","order_currency":"BDT"}' > body.json
+   printf '%s' '{"payment_id":"test-1","merchant_ref":"order_bd_0001","posting_state":"posted","client_amount":"1000.00","amount_posted":"1000.00","order_amount":"1000.00","order_currency":"BDT"}' > body.json
    openssl dgst -sha256 -sign test_private.pem body.json | base64 -w0 > sig.txt
 
    curl -X POST http://localhost:3000/webhooks/grosspay \

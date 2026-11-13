@@ -22,7 +22,7 @@ A deposit is created with `intent: "debit"` and is completed **only on the Gross
 3. You redirect the customer to `hosted_url`.
 4. The page shows payment instructions for exactly that method — the customer doesn't choose anything. For a wallet transfer the customer pays in the wallet app and enters the **TrxID** (transaction ID from the confirmation SMS / app, e.g. `9A1B2C3D4E`).
 5. GrossPay confirms the payment, sends you webhooks, and returns the customer to your `return_uri`.
-6. You credit the customer **only** after a verified webhook (or status) with `posting_state` `posted` / `part_posted`, using `amount_posted`.
+6. You credit the customer **only** after a verified webhook (or status) with `posting_state` `posted` / `part_posted`, using **`client_amount`** — the amount the customer actually paid.
 
 Host-to-host (`silent_mode`) is **not available** for Bangladesh.
 
@@ -138,7 +138,10 @@ Replace every `your-site.com` URL with your own endpoints. Requests without `rou
 | `booked_at` | When the payment was created (UTC). |
 | `client_amount`, `decline_note`, `posted_at`, `payee_details` | `null` at this stage. See [Payment object](06-payment-object.md). |
 
-Once the payment is booked, the object gains the field **`amount_posted`** — the amount that was actually paid and booked. This is the number you credit.
+Once the payment is booked:
+
+- **`client_amount`** — how much the customer actually paid. **This is the number you credit to the player.**
+- **`amount_posted`** — the posting on your merchant balance at GrossPay. For a deposit it equals the customer's payment; GrossPay's fee is then deducted from it on your merchant balance (see [Amounts and fees](06-payment-object.md#amounts-and-fees)).
 
 The full field reference is in [Payment object & lifecycle](06-payment-object.md).
 
@@ -346,12 +349,12 @@ curl -X POST https://api-test.grosspayme.com/v1/payments/init \
 |---|---|---|
 | `received` | Waiting for the payer | Nothing; show "pending" |
 | `queued` | Payment confirmed, being booked | Nothing yet; show "processing" |
-| `posted` | Fully paid and booked | Credit **`amount_posted`** |
-| `part_posted` | Partially paid | Credit **`amount_posted`** (it is lower than `order_amount`) |
+| `posted` | Fully paid and booked | Credit **`client_amount`** |
+| `part_posted` | Partially paid | Credit **`client_amount`** (it is lower than `order_amount`) |
 | `unposted` | Declined, cancelled or expired | Mark the order failed; nothing to credit. Reason in `decline_note`. |
 | `returned` | Previously booked money was rolled back (reversal, refund, chargeback) | **Debit back** what you credited for this payment |
 
-> **Always credit `amount_posted`, never `order_amount`.** The payer may pay a different amount than requested; `amount_posted` is what was actually booked.
+> **Always credit `client_amount`, never `order_amount`.** The payer may pay a different amount than requested; `client_amount` is what was actually paid. GrossPay's fee is charged to your merchant balance, not to the player — don't subtract it from the player's credit.
 
 See [Payment object & lifecycle](06-payment-object.md#how-to-book-balances) for the full accounting rules.
 

@@ -90,7 +90,7 @@
                 "init"
               ]
             },
-            "description": "Creates a deposit with a fresh `merchant_ref` (`order_bd_<timestamp>`).\n\nOpen `hosted_url` from the response (also printed in the Postman console and saved to the `hostedUrl` variable) to pay with bKash and enter the TrxID.\n\n**Credit the customer only after a signed webhook with `posted` / `part_posted`, using `amount_posted`.**",
+            "description": "Creates a deposit with a fresh `merchant_ref` (`order_bd_<timestamp>`).\n\nOpen `hosted_url` from the response (also printed in the Postman console and saved to the `hostedUrl` variable) to pay with bKash and enter the TrxID.\n\n**Credit the player only after a signed webhook with `posted` / `part_posted`, using `client_amount`** (`amount_posted` is the posting on your merchant balance).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"order_amount\": \"{{depositAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"debit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{debitRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"holder_name\": \"Rahim Uddin\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"return_uri\": \"{{returnUri}}\"\n}",
@@ -439,7 +439,7 @@
                 "init"
               ]
             },
-            "description": "Sends `payoutAmount` to `walletNumber` (environment variables).\n\nAccepted number formats: `01712345678`, `8801712345678`, `+880 1712-345678`; normalised value must match `^01[3-9]\\d{8}$`, otherwise error `474`.\n\n⚠️ In Production this sends real money.",
+            "description": "Sends `payoutAmount` to `walletNumber` (environment variables).\n\nAccepted number formats: `01712345678`, `8801712345678`, `+880 1712-345678`; normalised value must match `^01[3-9]\\d{8}$`, otherwise error `474`.\n\nAfter booking: debit the player `client_amount`; `amount_posted` = payout + fee is debited from your merchant balance.\n\n⚠️ In Production this sends real money.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"order_amount\": \"{{payoutAmount}}\",\n  \"order_currency\": \"BDT\",\n  \"intent\": \"credit\",\n  \"route_kind\": \"wallet\",\n  \"route_network\": \"bkash\",\n  \"merchant_ref\": \"{{creditRef}}\",\n  \"holder_ref\": \"{{holderRef}}\",\n  \"callback_uri\": \"{{callbackUri}}\",\n  \"credit_details\": {\n    \"wallet_number\": \"{{walletNumber}}\",\n    \"payee_title\": \"Rahim Uddin\"\n  }\n}",

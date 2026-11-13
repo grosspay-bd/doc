@@ -43,7 +43,8 @@ Complete every item in the **Test** environment (`api-test.grosspayme.com`) befo
 - [ ] Invalid / missing signature → nothing changes, response `401`/`403`
 - [ ] Handler is idempotent (duplicates do not double-credit)
 - [ ] Out-of-order events handled (late `queued` after `posted` is ignored)
-- [ ] Amounts booked from `amount_posted`, never from `order_amount`
+- [ ] Player balance booked from `client_amount` — never from `order_amount`, and never from `amount_posted` (on payouts it includes the fee)
+- [ ] `amount_posted` and fees used only to reconcile your merchant balance at GrossPay
 - [ ] `returned` reverses previous credit/debit
 - [ ] `unposted → posted` (late confirmation) is accepted
 - [ ] Response `200` within a few seconds; heavy work is async
@@ -67,16 +68,16 @@ Run each scenario in Test and record the `payment_id`. Scenarios that depend on 
 | T1 | Deposit 1000.00, pay in full | Webhook `posted`, customer +1000.00 |
 | T2 | Deposit, payer abandons the page | Webhook `unposted`, no credit, order failed |
 | T3 | Deposit, payer returns to `return_uri` before paying | Order still pending, no credit |
-| T4 | Deposit, payer pays less than requested | `part_posted`, credit = `amount_posted` |
+| T4 | Deposit, payer pays less than requested | `part_posted`, credit = `client_amount` |
 | T5 | Second deposit for same `holder_ref` while T-payment active | `470` handled gracefully |
 | T6 | Deposit with amount below min / above max | `475` / `476` message to customer |
 | T7 | Request without `Bearer ` prefix | `403`, alert in logs |
-| T8 | Payout 1500.00 to a valid number | Hold → `posted` → final debit |
+| T8 | Payout 1500.00 to a valid number | Reserved → `posted` → player debited `client_amount` (1500.00), **not** `amount_posted` (1500.00 + fee) |
 | T9 | Payout to `0171234` (invalid) | `474`, hold released / not created |
 | T10 | Payout `posted`, then `returned` | Customer gets 1500.00 back |
 | T11 | `POST /payments/init` timeout simulated (kill connection) | Recovery via `GET /payments/{merchant_ref}/state`, single payment |
 | T12 | Escalate a payment with 1 receipt | `{"escalated": true}` |
-| T13 | Nagad deposit (`route_kind: wallet`, `route_network: nagad`) | Hosted page for Nagad; webhook `posted`, credit = `amount_posted`; `route_network` in the object = `nagad` |
+| T13 | Nagad deposit (`route_kind: wallet`, `route_network: nagad`) | Hosted page for Nagad; webhook `posted`, credit = `client_amount`; `route_network` in the object = `nagad` |
 | T14 | Deposit with `holder_account` | `holder_account` returned in the payment object (may be masked); invalid number → `474` |
 | T15 | Nagad payout | Hold → `posted` → final debit; `payee_details.wallet_number` normalised |
 | T16 | Bank payout (`route_kind: bank`, bank code in `route_network`) | Hold kept while `queued` (may last to next business day) → `posted`; `rail_ref` stored |

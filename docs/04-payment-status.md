@@ -40,7 +40,7 @@ The response has **the same structure** as the `POST /payments/init` response an
   "merchant_ref": "order_bd_0001",
   "posting_state": "posted",
   "amount_posted": "1000.00",
-  "client_amount": null,
+  "client_amount": "1000.00",
   "decline_note": null,
   "order_amount": "1000.00",
   "order_currency": "BDT",

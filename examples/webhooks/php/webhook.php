@@ -35,19 +35,24 @@ function toCents(?string $amount): int {
     return (int)$parts[0] * 100 + (int)$frac;
 }
 
+/**
+ * What should be booked on the PLAYER's balance in the current state.
+ * Always client_amount (paid / received by the customer) — never amount_posted,
+ * which on payouts includes GrossPay's fee charged to the merchant balance.
+ */
 function targetCents(array $e): int {
-    return in_array($e['posting_state'] ?? null, ['posted', 'part_posted'], true)
-        ? toCents($e['amount_posted'] ?? null)
-        : 0;
+    if (!in_array($e['posting_state'] ?? null, ['posted', 'part_posted'], true)) return 0;
+    if (!isset($e['client_amount'])) throw new RuntimeException('client_amount missing for ' . $e['payment_id']);
+    return toCents($e['client_amount']);
 }
 
 /** Idempotent, order-tolerant state application. */
 function applyEvent(array $e, array &$db): string {
     $pid = $e['payment_id'];
-    $cur = $db['payments'][$pid] ?? ['posting_state' => null, 'amount_posted' => null, 'booked_cents' => 0];
+    $cur = $db['payments'][$pid] ?? ['posting_state' => null, 'client_amount' => null, 'booked_cents' => 0];
 
     if ($cur['posting_state'] === ($e['posting_state'] ?? null)
-        && $cur['amount_posted'] === ($e['amount_posted'] ?? null)) {
+        && $cur['client_amount'] === ($e['client_amount'] ?? null)) {
         return 'duplicate';
     }
     if (in_array($cur['posting_state'], FINAL_STATES, true)
@@ -57,12 +62,13 @@ function applyEvent(array $e, array &$db): string {
 
     $delta = targetCents($e) - $cur['booked_cents'];
     if ($delta !== 0) {
-        // Pay-in: +delta to customer balance. Pay-out: delta is the final debit.
+        // Pay-in: +delta to the player's balance. Pay-out: delta is the player's final debit.
         $db['ledger'][] = ['payment_id' => $pid, 'merchant_ref' => $e['merchant_ref'] ?? null, 'delta_cents' => $delta];
     }
     $db['payments'][$pid] = [
         'posting_state' => $e['posting_state'] ?? null,
-        'amount_posted' => $e['amount_posted'] ?? null,
+        'client_amount' => $e['client_amount'] ?? null,
+        'amount_posted' => $e['amount_posted'] ?? null, // merchant-balance posting, reconciliation only
         'booked_cents'  => $cur['booked_cents'] + $delta,
     ];
     return sprintf('applied %s -> %s, delta %d', $cur['posting_state'] ?? '-', $e['posting_state'] ?? '-', $delta);

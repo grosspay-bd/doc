@@ -18,14 +18,21 @@
 
 A payout sends money from your GrossPay balance to a customer's **mobile wallet** (bKash, Nagad, Rocket, Upay) or **bank account**. It is fully server-to-server: there is no payment page and no customer interaction.
 
-1. Reserve (hold) the amount on the customer's balance in **your** system.
+1. In **your** system, take the requested amount off the player's available balance (reserve it), so the player can't spend it twice.
 2. Call `POST /payments/init` with `intent: "credit"`, the destination (`route_kind` + `route_network`) and the recipient's details.
 3. GrossPay returns `payment_id`, `posting_state: "received"`.
 4. GrossPay sends the transfer and notifies you via [webhooks](05-webhooks.md).
-5. On `posted` — finalise the withdrawal. On `unposted` — release the hold back to the customer.
-6. If a payout that was `posted` later becomes `returned` — credit the amount back to the customer.
+5. On `posted` — the withdrawal is done: the player is debited `client_amount`. On `unposted` — give the reserved amount back to the player.
+6. If a payout that was `posted` later becomes `returned` — give the amount back to the player.
 
-The payout amount is taken from your merchant balance — check it with [`GET /partner/ledger_balance`](09-balance.md).
+**Two balances are involved:**
+
+| Balance | Changes by |
+|---|---|
+| Player's balance in your system | `client_amount` — what the customer received |
+| Your merchant balance at GrossPay | `amount_posted` — **payout + GrossPay fee** |
+
+Example: payout 15 000, fee 450 → `client_amount` = 15000.00 (debit the player), `amount_posted` = 15450.00 (debited from your merchant balance). Make sure [`available_balance`](09-balance.md) covers payouts **including fees**. Details: [Amounts and fees](06-payment-object.md#amounts-and-fees).
 
 ---
 
@@ -202,6 +209,8 @@ Same structure as the deposit response, **without** `hosted_url`. `payee_details
 }
 ```
 
+After the payout is booked the object also contains `client_amount` (received by the customer) and `amount_posted` (debited from your merchant balance, payout + fee) — see [Final result](#final-result-and-customer-balance).
+
 `payment_id` above is illustrative. Store the returned `payment_id` together with your withdrawal record. After the payout is sent, `rail_ref` contains the wallet transaction ID or the bank reference — keep it for reconciliation and for answering the customer.
 
 ---
@@ -359,12 +368,14 @@ Replace `<bank_code>` with a code from the [bank directory](11-payment-methods.m
 
 | `posting_state` | Meaning | Customer balance in your system |
 |---|---|---|
-| `received` | Accepted, waiting to be sent | Keep the hold |
-| `queued` | Being processed (bank payouts: may last until the next business day) | Keep the hold |
-| `posted` | Sent successfully | Convert the hold into a final debit |
-| `part_posted` | Sent partially; actual amount in `amount_posted` | Debit `amount_posted`, release the rest of the hold |
-| `unposted` | Not sent (declined, cancelled, expired, wallet/account does not exist) | Release the full hold; reason in `decline_note` |
-| `returned` | Was sent, then rolled back (reversal, bank return) | Credit the previously debited amount back to the customer |
+| `received` | Accepted, waiting to be sent | Keep the amount reserved |
+| `queued` | Being processed (bank payouts: may last until the next business day) | Keep the amount reserved |
+| `posted` | Sent successfully | Final debit = **`client_amount`** (normally = `order_amount`) |
+| `part_posted` | Sent partially | Debit **`client_amount`**, return `order_amount − client_amount` to the player |
+| `unposted` | Not sent (declined, cancelled, expired, wallet/account does not exist) | Return the full reserved amount; reason in `decline_note` |
+| `returned` | Was sent, then rolled back (reversal, bank return) | Return the previously debited `client_amount` to the player |
+
+> **⚠️ Never debit the player by `amount_posted`.** On a payout `amount_posted` includes GrossPay's fee (15 000 payout → `amount_posted` 15 450). The fee is charged to your merchant balance, not to the player.
 
 > **⚠️ A successful payout can still come back.** A payout may first reach `posted` and later be reported as `returned`. Your webhook handler must support this transition and give the money back to the customer. See [Payment object → lifecycle](06-payment-object.md#lifecycle).
 
@@ -378,7 +389,7 @@ Network timeouts on payouts are the most expensive bug in a payment integration.
 1. Generate merchant_ref ONCE per withdrawal and persist it before calling the API.
 2. POST /payments/init
    ├─ 2xx                         → store payment_id, wait for webhooks
-   ├─ 4xx business error (47x)    → final error, release the hold (except 477, see below)
+   ├─ 4xx business error (47x)    → final error, return the reserved amount (except 477, see below)
    ├─ 477 "retry later"           → retry later with the SAME merchant_ref
    └─ timeout / connection error / 5xx
         → GET /payments/{merchant_ref}/state

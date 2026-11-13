@@ -38,7 +38,7 @@ Merchant integration guide for accepting deposits (**bKash, Nagad, BanglaQR, car
 
 4. **Redirect the payer** to `hosted_url` from the response. The payer pays in the wallet app and enters the TrxID on the page.
    For Nagad, BanglaQR or cards change `route_kind` / `route_network` — see [Payment methods & networks](docs/11-payment-methods.md).
-5. **Handle the webhook**: verify the `signature-v1` header, update your order from `posting_state` / `amount_posted`, reply `200`.
+5. **Handle the webhook**: verify the `signature-v1` header, update your order from `posting_state`, credit the player **`client_amount`**, reply `200`. (`amount_posted` is the posting on your merchant balance — see [Amounts and fees](docs/06-payment-object.md#amounts-and-fees).)
 
 Then work through the [go-live checklist](docs/10-go-live-checklist.md).
 
@@ -53,7 +53,7 @@ Then work through the [go-live checklist](docs/10-go-live-checklist.md).
 | 03 | [Pay-out (credit)](docs/03-pay-out.md) | Payouts to wallets and bank accounts, number rules, examples, safe retries |
 | 04 | [Payment status](docs/04-payment-status.md) | `GET /state` by `payment_id` or `merchant_ref`, polling rules |
 | 05 | [Webhooks](docs/05-webhooks.md) | Delivery, IP, signature verification, response codes, handler algorithm |
-| 06 | [Payment object & lifecycle](docs/06-payment-object.md) | Every field, `posting_state` machine, how to book balances |
+| 06 | [Payment object & lifecycle](docs/06-payment-object.md) | Every field, amounts and fees, `posting_state` machine, how to book balances |
 | 07 | [Errors](docs/07-errors.md) | Error envelope, `fault.class`, business codes `470–477`, retry policy |
 | 08 | [Disputes](docs/08-disputes.md) | `POST /escalate` with receipts |
 | 09 | [Balance](docs/09-balance.md) | `GET /partner/ledger_balance` |

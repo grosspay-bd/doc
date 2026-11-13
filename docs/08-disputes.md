@@ -74,7 +74,7 @@ const res = await fetch(`${BASE_URL}/payments/${paymentId}/escalate`, {
 
 ## After escalation
 
-`{"escalated": true}` means the dispute was registered. The outcome arrives as a normal state change of the payment — via [webhook](05-webhooks.md) (e.g. `unposted → posted` with the confirmed `amount_posted`). Your [handler](05-webhooks.md#handler-algorithm) must therefore accept a payment becoming `posted` after it was `unposted`.
+`{"escalated": true}` means the dispute was registered. The outcome arrives as a normal state change of the payment — via [webhook](05-webhooks.md) (e.g. `unposted → posted` with the confirmed `client_amount`). Your [handler](05-webhooks.md#handler-algorithm) must therefore accept a payment becoming `posted` after it was `unposted`.
 
 ## Validation errors
 

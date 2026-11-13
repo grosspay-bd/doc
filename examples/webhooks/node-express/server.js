@@ -27,7 +27,7 @@ const FINAL = new Set(['posted', 'part_posted', 'unposted', 'returned']);
 const NON_FINAL = new Set(['received', 'queued']);
 
 // ---- stand-in for your database -------------------------------------------
-const db = new Map(); // key: payment_id -> { posting_state, amount_posted, booked_cents }
+const db = new Map(); // key: payment_id -> { posting_state, client_amount, booked_cents }
 const ledger = [];    // ledger entries written by applyEvent()
 
 // ---- helpers ---------------------------------------------------------------
@@ -47,18 +47,22 @@ function toCents(amount) {
   return Number(whole) * 100 + Number((frac + '00').slice(0, 2)) * (whole.startsWith('-') ? -1 : 1);
 }
 
-/** How much should be booked for this payment in its current state. */
+/**
+ * How much should be booked on the PLAYER's balance for this payment in its current state.
+ * Always client_amount (paid / received by the customer) — never amount_posted,
+ * which on payouts includes GrossPay's fee charged to the merchant balance.
+ */
 function targetCents(event) {
-  return event.posting_state === 'posted' || event.posting_state === 'part_posted'
-    ? toCents(event.amount_posted)
-    : 0;
+  if (event.posting_state !== 'posted' && event.posting_state !== 'part_posted') return 0;
+  if (event.client_amount == null) throw new Error(`client_amount missing for ${event.payment_id}`);
+  return toCents(event.client_amount);
 }
 
 /** Idempotent, order-tolerant state application. Returns a short description. */
 function applyEvent(event) {
-  const current = db.get(event.payment_id) || { posting_state: null, amount_posted: null, booked_cents: 0 };
+  const current = db.get(event.payment_id) || { posting_state: null, client_amount: null, booked_cents: 0 };
 
-  if (current.posting_state === event.posting_state && current.amount_posted === (event.amount_posted ?? null)) {
+  if (current.posting_state === event.posting_state && current.client_amount === (event.client_amount ?? null)) {
     return 'duplicate';
   }
   if (FINAL.has(current.posting_state) && NON_FINAL.has(event.posting_state)) {
@@ -67,12 +71,13 @@ function applyEvent(event) {
 
   const delta = targetCents(event) - current.booked_cents;
   if (delta !== 0) {
-    // Pay-in: +delta to the customer's balance. Pay-out: delta is the final debit (release/return the rest).
+    // Pay-in: +delta to the player's balance. Pay-out: delta is the player's final debit (return the rest of the reserve).
     ledger.push({ payment_id: event.payment_id, merchant_ref: event.merchant_ref, delta_cents: delta });
   }
   db.set(event.payment_id, {
     posting_state: event.posting_state,
-    amount_posted: event.amount_posted ?? null,
+    client_amount: event.client_amount ?? null,
+    amount_posted: event.amount_posted ?? null, // merchant-balance posting, for reconciliation only
     booked_cents: current.booked_cents + delta,
   });
   return `applied ${current.posting_state ?? '∅'} → ${event.posting_state}, delta ${delta / 100}`;
